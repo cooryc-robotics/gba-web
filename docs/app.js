@@ -336,8 +336,34 @@
     const ptr = Module._em_get_save_ptr();
     const b64 = u8ToBase64(new Uint8Array(Module.HEAPU8.buffer, ptr, size));
     if (b64 === lastSavedB64) return;
+    try {
+      localStorage.setItem(saveKey, b64);
+    } catch (err) {
+      // Sin espacio o almacenamiento bloqueado (p. ej. navegación privada):
+      // avisamos y lo reintentamos en el próximo autoguardado.
+      showToast('No se pudo guardar la partida (' + (err.name || err) + ')', true);
+      return;
+    }
     lastSavedB64 = b64;
-    localStorage.setItem(saveKey, b64);
+    showToast('Partida guardada');
+  }
+
+  const saveToast = document.getElementById('save-toast');
+  let saveToastTimer = null;
+  function showToast(msg, isError) {
+    if (isError) console.error(msg);
+    if (!saveToast) return;
+    saveToast.textContent = msg;
+    saveToast.classList.toggle('error', !!isError);
+    saveToast.classList.add('show');
+    clearTimeout(saveToastTimer);
+    saveToastTimer = setTimeout(() => saveToast.classList.remove('show'), isError ? 5000 : 1500);
+  }
+
+  // Pide al navegador que no borre los datos de la web por falta de espacio
+  // o inactividad (Safari los borra a los 7 días si no se concede).
+  if (navigator.storage && navigator.storage.persist) {
+    navigator.storage.persist().catch(() => {});
   }
 
   function u8ToBase64(u8) {
