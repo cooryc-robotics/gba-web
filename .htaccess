@@ -1,3 +1,8 @@
+# Solo se sirve desde gba.cooryc.com: cooryc.com/gba redirige alli
+RewriteEngine On
+RewriteCond %{HTTP_HOST} !^gba\.cooryc\.com$ [NC]
+RewriteRule ^(.*)$ https://gba.cooryc.com/$1 [R=301,L]
+
 # No indexar en buscadores
 Header set X-Robots-Tag "noindex, nofollow"
 Options -Indexes
