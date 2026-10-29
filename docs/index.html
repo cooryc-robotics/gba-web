@@ -395,6 +395,65 @@
     box-shadow: none;
     text-align: center;
   }
+
+  /* Usuario con sesión iniciada, arriba del menú */
+  #menu-user {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin: 0 0 14px;
+    font-size: 13px;
+    color: var(--label);
+  }
+  #menu-user.hidden { display: none; }
+  #menu-user span { opacity: 0.8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #logout-btn {
+    flex: none;
+    padding: 6px 12px;
+    border: none;
+    border-radius: 10px;
+    background: var(--shoulder);
+    color: var(--label);
+    font-size: 13px;
+  }
+
+  /* Pantalla de inicio de sesión (encima del menú) */
+  #login {
+    position: fixed;
+    inset: 0;
+    max-width: 520px;
+    margin: 0 auto;
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: calc(24px + env(safe-area-inset-top)) 20px calc(24px + env(safe-area-inset-bottom));
+    background: linear-gradient(180deg, var(--shell), var(--shell-dark));
+    overflow-y: auto;
+    touch-action: pan-y;
+  }
+  #login.hidden { display: none; }
+  #login h1 { margin: 0 0 6px; font-size: 22px; color: var(--label); }
+  #login .login-sub { margin: 0 0 20px; font-size: 14px; color: var(--label); opacity: 0.8; }
+  #login input {
+    display: block;
+    width: 100%;
+    height: 52px;
+    margin: 0 0 10px;
+    padding: 0 16px;
+    border: 2px solid transparent;
+    border-radius: 14px;
+    background: var(--bezel);
+    color: var(--label);
+    font-size: 16px; /* 16px o más: iOS no hace zoom al escribir */
+    -webkit-user-select: text;
+    user-select: text;
+    touch-action: manipulation;
+  }
+  #login input:focus { outline: none; border-color: var(--meta); }
+  #login .menu-item { text-align: center; }
+  #login-status { min-height: 18px; margin: 6px 0 0; font-size: 13px; color: #ffb4b4; }
 </style>
 </head>
 <body>
@@ -460,6 +519,7 @@
 
 <!-- Menú de selección de juego -->
 <div id="menu">
+  <div id="menu-user" class="hidden"><span id="menu-username"></span><button id="logout-btn">Cerrar sesión</button></div>
   <h1>Selecciona un juego</h1>
   <p id="menu-status">Cargando emulador…</p>
   <div id="menu-list"></div>
@@ -468,6 +528,19 @@
   <button id="menu-load" class="menu-item menu-load">+ Cargar juego del dispositivo</button>
   <input type="file" id="menu-file" hidden>
   <p id="menu-saves"></p>
+</div>
+
+<!-- Inicio de sesión: las partidas se guardan en la cuenta del usuario -->
+<div id="login" class="hidden">
+  <h1>Game Boy Web</h1>
+  <p class="login-sub">Inicia sesión para guardar tus partidas en tu cuenta.</p>
+  <form id="login-form" novalidate>
+    <input id="login-user" name="username" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="Usuario">
+    <input id="login-pass" name="password" type="password" autocomplete="current-password" placeholder="Contraseña">
+    <button type="submit" id="login-submit" class="menu-item">Entrar</button>
+    <button type="button" id="login-toggle" class="menu-item menu-load">Crear cuenta nueva</button>
+    <p id="login-status"></p>
+  </form>
 </div>
 
 <script src="gb.js"></script>
