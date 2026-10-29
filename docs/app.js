@@ -305,6 +305,7 @@
     if (led) led.classList.remove('on');
 
     setMenuStatus('');
+    renderSaves();
     menu.classList.remove('hidden');
   }
 
@@ -345,8 +346,34 @@
       return;
     }
     lastSavedB64 = b64;
+    try { localStorage.setItem('gbatime::' + saveKey, String(Date.now())); } catch (e) { /* solo informativo */ }
     showToast('Partida guardada');
   }
+
+  // Lista en el menú las partidas que hay guardadas en este navegador, para
+  // poder comprobar de un vistazo si siguen ahí tras recargar.
+  function renderSaves() {
+    const el = document.getElementById('menu-saves');
+    if (!el) return;
+    const items = [];
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (!key.startsWith('gbasave::')) continue;
+        const name = key.slice(9, key.lastIndexOf('::'))
+          .replace(/^(roms\/|local:)/, '').replace(/\.(gba|gbc|gb)$/i, '');
+        const t = Number(localStorage.getItem('gbatime::' + key));
+        items.push(t ? name + ' (' + new Date(t).toLocaleString() + ')' : name);
+      }
+    } catch (e) {
+      el.textContent = 'No se puede leer el almacenamiento del navegador (' + (e.name || e) + ').';
+      return;
+    }
+    el.textContent = items.length
+      ? 'Partidas guardadas en este navegador: ' + items.sort().join(' · ')
+      : 'No hay partidas guardadas en este navegador.';
+  }
+  renderSaves();
 
   const saveToast = document.getElementById('save-toast');
   let saveToastTimer = null;

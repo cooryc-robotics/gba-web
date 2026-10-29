@@ -336,6 +336,13 @@
     opacity: 0.8;
   }
   #menu-status.error { color: #ffb4b4; opacity: 1; }
+  #menu-saves {
+    margin: 14px 0 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--label);
+    opacity: 0.7;
+  }
   .menu-item {
     display: block;
     width: 100%;
@@ -460,6 +467,7 @@
   <div id="menu-local"></div>
   <button id="menu-load" class="menu-item menu-load">+ Cargar juego del dispositivo</button>
   <input type="file" id="menu-file" hidden>
+  <p id="menu-saves"></p>
 </div>
 
 <script src="gb.js"></script>
