@@ -28,7 +28,9 @@
   let starting = false;
   let imageData = ctx.createImageData(W, H);
   let saveKey = null;       // clave localStorage del save actual
+  let cloudKey = null;      // clave del save actual en el servidor
   let lastSavedB64 = null;  // para no reescribir localStorage si no ha cambiado nada
+  let currentUser = null;   // { id, username } con la sesión iniciada
 
   function setMenuStatus(msg, isError) {
     menuStatus.textContent = msg || '';
@@ -62,6 +64,80 @@
     })
     .catch((err) => setMenuStatus('No se pudo iniciar el emulador: ' + err, true));
 
+  /* ---- Cuenta de usuario ---- */
+  // Las partidas se guardan en el servidor (api/) asociadas al usuario, con
+  // una copia en localStorage por si se pierde la conexión.
+
+  const loginEl = document.getElementById('login');
+  const loginForm = document.getElementById('login-form');
+  const loginUser = document.getElementById('login-user');
+  const loginPass = document.getElementById('login-pass');
+  const loginSubmit = document.getElementById('login-submit');
+  const loginToggle = document.getElementById('login-toggle');
+  const loginStatus = document.getElementById('login-status');
+  const menuUser = document.getElementById('menu-user');
+  let registering = false;
+
+  // Llamada a la API. La cabecera X-GBA marca las peticiones como nuestras.
+  function api(path, opts) {
+    opts = opts || {};
+    const headers = Object.assign({ 'X-GBA': '1' }, opts.headers || {});
+    return fetch('api/' + path, Object.assign({ credentials: 'same-origin', cache: 'no-store' }, opts, { headers }));
+  }
+
+  function setUser(user) {
+    currentUser = user;
+    loginEl.classList.toggle('hidden', !!user);
+    menuUser.classList.toggle('hidden', !user);
+    document.getElementById('menu-username').textContent = user ? 'Sesión: ' + user.username : '';
+    if (user) renderSaves();
+  }
+
+  function setLoginMode(reg) {
+    registering = reg;
+    loginSubmit.textContent = reg ? 'Crear cuenta' : 'Entrar';
+    loginToggle.textContent = reg ? 'Ya tengo cuenta' : 'Crear cuenta nueva';
+    loginPass.autocomplete = reg ? 'new-password' : 'current-password';
+    loginPass.placeholder = reg ? 'Contraseña (mínimo 8 caracteres)' : 'Contraseña';
+    loginStatus.textContent = '';
+  }
+
+  loginToggle.addEventListener('click', () => setLoginMode(!registering));
+
+  loginForm.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    loginStatus.textContent = '';
+    loginSubmit.disabled = true;
+    try {
+      const r = await api('auth.php?action=' + (registering ? 'register' : 'login'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: loginUser.value.trim(), password: loginPass.value }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || 'Error ' + r.status);
+      loginPass.value = '';
+      setUser(data.user);
+    } catch (err) {
+      loginStatus.textContent = err.message || String(err);
+    }
+    loginSubmit.disabled = false;
+  });
+
+  document.getElementById('logout-btn').addEventListener('click', async () => {
+    try { await api('auth.php?action=logout', { method: 'POST' }); } catch (e) { /* se cierra igualmente aquí */ }
+    setLoginMode(false);
+    setUser(null);
+  });
+
+  api('auth.php')
+    .then((r) => r.json())
+    .then((data) => setUser(data.user || null))
+    .catch(() => {
+      setUser(null);
+      loginStatus.textContent = 'No se puede conectar con el servidor';
+    });
+
   function buildMenu(list) {
     menuList.innerHTML = '';
     setMenuStatus(list.length ? '' : 'No hay juegos en el servidor: carga uno de tu dispositivo.');
@@ -83,7 +159,7 @@
     setMenuStatus('Cargando ' + title + '…');
     try {
       const buf = await getBuf();
-      if (loadRom(buf, key)) {
+      if (await loadRom(buf, key)) {
         menu.classList.add('hidden');
         setMenuStatus('');
       }
@@ -261,12 +337,12 @@
     document.body.classList.toggle('is-gb', isGb);
   }
 
-  function loadRom(buf, key) {
+  async function loadRom(buf, key) {
     const ptr = Module._em_alloc_rom(buf.length);
     Module.HEAPU8.set(buf, ptr);
 
     // La partida guardada (si hay) tiene que estar en su sitio antes de arrancar.
-    setupSaveSlot(key, buf.length);
+    await setupSaveSlot(key, buf.length);
 
     const gb = isGbFile(key);
     const err = Module._em_start(gb ? 1 : 0);
@@ -301,6 +377,7 @@
 
     Module._em_stop();
     saveKey = null;
+    cloudKey = null;
     const led = document.getElementById('led');
     if (led) led.classList.remove('on');
 
@@ -311,25 +388,54 @@
 
   if (menuBtn) menuBtn.addEventListener('click', goToMenu);
 
-  /* ---- Guardado de partidas en localStorage ---- */
+  /* ---- Guardado de partidas: servidor + copia en localStorage ---- */
   // mGBA usa un bloque de 128 KiB para cualquier tipo de guardado (SRAM,
-  // Flash, EEPROM). Solo se escribe en localStorage cuando el juego lo cambia.
+  // Flash, EEPROM). Cuando el juego lo cambia se guarda en localStorage y se
+  // sube a la cuenta del usuario. Si la subida falla, la copia local queda
+  // marcada como pendiente y gana sobre la del servidor la próxima vez.
 
-  function setupSaveSlot(fileName, romSize) {
-    saveKey = 'gbasave::' + fileName + '::' + romSize;
+  let uploading = false;
+  let nextUpload = null;
+
+  function pendingKey() { return 'gbapending::' + saveKey; }
+
+  async function setupSaveSlot(fileName, romSize) {
+    cloudKey = fileName + '::' + romSize;
+    saveKey = 'gbasave::' + (currentUser ? currentUser.id : 0) + '::' + cloudKey;
     lastSavedB64 = null;
+    const size = Module._em_get_save_size();
 
-    const stored = localStorage.getItem(saveKey);
-    if (stored) {
-      const bytes = base64ToU8(stored);
-      if (bytes.length === Module._em_get_save_size()) {
-        Module.HEAPU8.set(bytes, Module._em_get_save_ptr());
-        lastSavedB64 = stored;
+    let local = null, pending = false;
+    try {
+      local = localStorage.getItem(saveKey);
+      pending = localStorage.getItem(pendingKey()) === '1';
+    } catch (e) { /* sin localStorage: solo servidor */ }
+
+    let bytes = null;
+    if (local && pending) {
+      bytes = base64ToU8(local); // cambios que no llegaron a subirse
+    } else {
+      try {
+        const r = await api('saves.php?key=' + encodeURIComponent(cloudKey));
+        if (r.ok) bytes = new Uint8Array(await r.arrayBuffer());
+        else if (r.status !== 404) throw new Error('HTTP ' + r.status);
+      } catch (err) {
+        if (local) bytes = base64ToU8(local);
+        showToast('Sin conexión: se usa la copia de este dispositivo', true);
       }
     }
+
+    if (bytes && bytes.length <= size) {
+      // En el servidor se guarda sin los 0xFF del final: se rellenan aquí.
+      const full = new Uint8Array(size).fill(0xFF);
+      full.set(bytes);
+      Module.HEAPU8.set(full, Module._em_get_save_ptr());
+      lastSavedB64 = u8ToBase64(full);
+    }
+    if (pending) uploadSave();
   }
 
-  function saveNow() {
+  function saveNow(isLeaving) {
     if (!Module || !saveKey) return;
     if (!Module._em_save_changed()) return; // el juego no ha tocado la partida
 
@@ -337,43 +443,78 @@
     const ptr = Module._em_get_save_ptr();
     const b64 = u8ToBase64(new Uint8Array(Module.HEAPU8.buffer, ptr, size));
     if (b64 === lastSavedB64) return;
+    lastSavedB64 = b64;
     try {
       localStorage.setItem(saveKey, b64);
-    } catch (err) {
-      // Sin espacio o almacenamiento bloqueado (p. ej. navegación privada):
-      // avisamos y lo reintentamos en el próximo autoguardado.
-      showToast('No se pudo guardar la partida (' + (err.name || err) + ')', true);
-      return;
-    }
-    lastSavedB64 = b64;
-    try { localStorage.setItem('gbatime::' + saveKey, String(Date.now())); } catch (e) { /* solo informativo */ }
-    showToast('Partida guardada');
+      localStorage.setItem(pendingKey(), '1');
+    } catch (e) { /* sin localStorage: depende solo de la subida */ }
+    uploadSave(isLeaving === true);
   }
 
-  // Lista en el menú las partidas que hay guardadas en este navegador, para
-  // poder comprobar de un vistazo si siguen ahí tras recargar.
-  function renderSaves() {
-    const el = document.getElementById('menu-saves');
-    if (!el) return;
-    const items = [];
-    try {
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (!key.startsWith('gbasave::')) continue;
-        const name = key.slice(9, key.lastIndexOf('::'))
-          .replace(/^(roms\/|local:)/, '').replace(/\.(gba|gbc|gb)$/i, '');
-        const t = Number(localStorage.getItem('gbatime::' + key));
-        items.push(t ? name + ' (' + new Date(t).toLocaleString() + ')' : name);
-      }
-    } catch (e) {
-      el.textContent = 'No se puede leer el almacenamiento del navegador (' + (e.name || e) + ').';
-      return;
-    }
-    el.textContent = items.length
-      ? 'Partidas guardadas en este navegador: ' + items.sort().join(' · ')
-      : 'No hay partidas guardadas en este navegador.';
+  // Quita los 0xFF del final (zona sin usar del bloque) para subir menos.
+  function trimmedSave(b64) {
+    const u8 = base64ToU8(b64);
+    let end = u8.length;
+    while (end > 0 && u8[end - 1] === 0xFF) end--;
+    return u8.slice(0, end);
   }
-  renderSaves();
+
+  // Sube la partida actual. Si ya hay una subida en marcha, la última
+  // versión queda en cola (con sus claves, por si se vuelve al menú).
+  async function uploadSave(isLeaving, job) {
+    job = job || (saveKey && lastSavedB64 ? { key: saveKey, cloud: cloudKey, b64: lastSavedB64 } : null);
+    if (!job) return;
+    if (uploading && !isLeaving) { nextUpload = job; return; }
+    uploading = true;
+    const { key, cloud, b64 } = job;
+    const body = trimmedSave(b64);
+    try {
+      const r = await api('saves.php?key=' + encodeURIComponent(cloud), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body,
+        // Al cerrar la página solo sobrevive una petición keepalive (máx. 64 KiB).
+        keepalive: !!isLeaving && body.length <= 60000,
+      });
+      if (r.status === 401) throw new Error('la sesión ha caducado');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      try {
+        if (localStorage.getItem(key) === b64) localStorage.removeItem('gbapending::' + key);
+      } catch (e) { /* nada */ }
+      if (!isLeaving) showToast('Partida guardada');
+    } catch (err) {
+      if (!isLeaving) showToast('Guardada solo en este dispositivo (' + (err.message || err) + ')', true);
+    }
+    uploading = false;
+    if (nextUpload) { const next = nextUpload; nextUpload = null; uploadSave(false, next); }
+  }
+
+  // Reintenta de vez en cuando lo que no se pudo subir.
+  setInterval(() => {
+    try {
+      if (saveKey && !uploading && localStorage.getItem(pendingKey()) === '1') uploadSave();
+    } catch (e) { /* nada */ }
+  }, 30000);
+
+  // Lista en el menú las partidas guardadas en la cuenta.
+  async function renderSaves() {
+    const el = document.getElementById('menu-saves');
+    if (!el || !currentUser) return;
+    try {
+      const r = await api('saves.php');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const items = (await r.json()).saves.map((s) => {
+        const name = s.key.slice(0, s.key.lastIndexOf('::'))
+          .replace(/^(roms\/|local:)/, '').replace(/\.(gba|gbc|gb)$/i, '');
+        return name + ' (' + new Date(s.updated_at).toLocaleString() + ')';
+      });
+      el.textContent = items.length
+        ? 'Partidas guardadas en tu cuenta: ' + items.join(' · ')
+        : 'Aún no hay partidas guardadas en tu cuenta.';
+    } catch (e) {
+      el.textContent = 'No se pudo consultar las partidas guardadas (' + (e.message || e) + ').';
+    }
+  }
 
   const saveToast = document.getElementById('save-toast');
   let saveToastTimer = null;
@@ -412,9 +553,9 @@
   // Autoguardado periódico (solo escribe si cambió algo) y al perder foco / cerrar.
   setInterval(saveNow, 3000);
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) saveNow();
+    if (document.hidden) saveNow(true);
   });
-  window.addEventListener('pagehide', saveNow);
+  window.addEventListener('pagehide', () => saveNow(true));
 
   // Velocidad real de una Game Boy Advance: 59.7275 fps (no 60 en punto). Si atamos
   // el emulador directamente a requestAnimationFrame, la velocidad del
