@@ -296,6 +296,8 @@
     // Soltar cualquier botón que quedara pulsado.
     for (let b = 0; b < 10; b++) Module._em_set_button(b, 0);
     document.querySelectorAll('[data-btn].active').forEach((el) => el.classList.remove('active'));
+    pointerBtn.clear();
+    btnCount.clear();
 
     Module._em_stop();
     saveKey = null;
@@ -460,15 +462,45 @@
   }
 
   /* ---- Controles táctiles ---- */
-  // Un botón puede recibir varios punteros (dedo) a la vez; sólo se
-  // considera "soltado" cuando el último puntero activo sobre él se va.
-  const activePointers = new Map(); // pointerId -> btnElement
+  // Cada dedo (pointerId) "está sobre" como mucho un botón. Al deslizar el
+  // dedo se recalcula qué botón hay debajo: si sale de un botón lo suelta y
+  // si entra en otro lo pulsa (p. ej. pasar de derecha a arriba en la cruceta
+  // sin levantar el dedo). Un botón sólo se suelta cuando ningún dedo lo pisa.
+  const pointerBtn = new Map(); // pointerId -> btnElement | null
+  const btnCount = new Map();   // btnElement -> nº de dedos encima
   let audioUnlocked = false;
 
-  document.querySelectorAll('[data-btn]').forEach((el) => {
-    const btnId = parseInt(el.dataset.btn, 10);
+  function btnAt(x, y) {
+    const hit = document.elementFromPoint(x, y);
+    return (hit && hit.closest) ? hit.closest('[data-btn]') : null;
+  }
 
-    const press = (ev) => {
+  function pressBtn(el) {
+    const n = btnCount.get(el) || 0;
+    btnCount.set(el, n + 1);
+    if (n > 0) return;
+    el.classList.add('active');
+    if (Module) Module._em_set_button(parseInt(el.dataset.btn, 10), 1);
+  }
+
+  function releaseBtn(el) {
+    const n = btnCount.get(el) || 0;
+    if (n > 1) { btnCount.set(el, n - 1); return; }
+    btnCount.delete(el);
+    el.classList.remove('active');
+    if (Module) Module._em_set_button(parseInt(el.dataset.btn, 10), 0);
+  }
+
+  function setPointerBtn(id, el) {
+    const prev = pointerBtn.get(id) || null;
+    if (prev === el) return;
+    if (prev) releaseBtn(prev);
+    if (el) pressBtn(el);
+    pointerBtn.set(id, el);
+  }
+
+  document.querySelectorAll('[data-btn]').forEach((el) => {
+    el.addEventListener('pointerdown', (ev) => {
       ev.preventDefault();
       if (!audioUnlocked) {
         // El primer toque del usuario en cualquier botón sirve como el
@@ -476,29 +508,25 @@
         audioUnlocked = true;
         initAudio();
       }
-      el.setPointerCapture(ev.pointerId);
-      activePointers.set(ev.pointerId, el);
-      el.classList.add('active');
-      if (Module) Module._em_set_button(btnId, 1);
-    };
-
-    const release = (ev) => {
-      ev.preventDefault();
-      if (!activePointers.has(ev.pointerId)) return;
-      activePointers.delete(ev.pointerId);
-      el.classList.remove('active');
-      if (Module) Module._em_set_button(btnId, 0);
-    };
-
-    el.addEventListener('pointerdown', press);
-    el.addEventListener('pointerup', release);
-    el.addEventListener('pointercancel', release);
-    el.addEventListener('pointerleave', (ev) => {
-      // Si el dedo se arrastra fuera del botón sin soltarlo, lo damos por
-      // soltado (evita botones "pegados" al deslizar entre el D-pad).
-      release(ev);
+      // En táctil el navegador "captura" el dedo en el botón donde empezó;
+      // lo liberamos para poder seguirlo por encima de los demás.
+      if (el.hasPointerCapture(ev.pointerId)) el.releasePointerCapture(ev.pointerId);
+      setPointerBtn(ev.pointerId, el);
     });
   });
+
+  document.addEventListener('pointermove', (ev) => {
+    if (!pointerBtn.has(ev.pointerId)) return;
+    setPointerBtn(ev.pointerId, btnAt(ev.clientX, ev.clientY));
+  });
+
+  const endPointer = (ev) => {
+    if (!pointerBtn.has(ev.pointerId)) return;
+    setPointerBtn(ev.pointerId, null);
+    pointerBtn.delete(ev.pointerId);
+  };
+  document.addEventListener('pointerup', endPointer);
+  document.addEventListener('pointercancel', endPointer);
 
   // Evita el gesto de "pull to refresh" / zoom por doble tap en iOS/Android.
   document.addEventListener('touchmove', (e) => {
