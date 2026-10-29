@@ -296,7 +296,7 @@
     // Soltar cualquier botón que quedara pulsado.
     for (let b = 0; b < 10; b++) Module._em_set_button(b, 0);
     document.querySelectorAll('[data-btn].active').forEach((el) => el.classList.remove('active'));
-    pointerBtn.clear();
+    pointerBtns.clear();
     btnCount.clear();
 
     Module._em_stop();
@@ -462,17 +462,39 @@
   }
 
   /* ---- Controles táctiles ---- */
-  // Cada dedo (pointerId) "está sobre" como mucho un botón. Al deslizar el
-  // dedo se recalcula qué botón hay debajo: si sale de un botón lo suelta y
-  // si entra en otro lo pulsa (p. ej. pasar de derecha a arriba en la cruceta
-  // sin levantar el dedo). Un botón sólo se suelta cuando ningún dedo lo pisa.
-  const pointerBtn = new Map(); // pointerId -> btnElement | null
-  const btnCount = new Map();   // btnElement -> nº de dedos encima
+  // Cada dedo (pointerId) pisa un conjunto de botones (uno, o dos en las
+  // diagonales de la cruceta). Al deslizar el dedo se recalcula ese conjunto:
+  // suelta lo que ya no pisa y pulsa lo nuevo (p. ej. pasar de derecha a
+  // arriba sin levantar el dedo). Un botón sólo se suelta cuando ningún dedo
+  // lo pisa.
+  const pointerBtns = new Map(); // pointerId -> Set<btnElement>
+  const btnCount = new Map();    // btnElement -> nº de dedos encima
   let audioUnlocked = false;
 
-  function btnAt(x, y) {
+  const dpadEl = document.getElementById('dpad');
+  // Las 8 direcciones de la cruceta, en sectores de 45° empezando por la
+  // derecha y girando en sentido horario (el eje Y de pantalla va hacia abajo).
+  const DPAD_SECTORS = [
+    ['dpad-right'], ['dpad-right', 'dpad-down'], ['dpad-down'], ['dpad-down', 'dpad-left'],
+    ['dpad-left'], ['dpad-left', 'dpad-up'], ['dpad-up'], ['dpad-up', 'dpad-right'],
+  ].map((ids) => ids.map((id) => document.getElementById(id)));
+  const DPAD_DEADZONE = 0.12; // radio muerto en el centro, en fracción del ancho
+
+  function btnsAt(x, y) {
     const hit = document.elementFromPoint(x, y);
-    return (hit && hit.closest) ? hit.closest('[data-btn]') : null;
+    if (!hit || !hit.closest) return [];
+    // En la cruceta manda el ángulo respecto al centro, no el botón que haya
+    // debajo, para que las esquinas den diagonales.
+    if (dpadEl && hit.closest('#dpad')) {
+      const r = dpadEl.getBoundingClientRect();
+      const dx = x - (r.left + r.width / 2);
+      const dy = y - (r.top + r.height / 2);
+      if (Math.hypot(dx, dy) < r.width * DPAD_DEADZONE) return [];
+      const sector = Math.round(Math.atan2(dy, dx) / (Math.PI / 4));
+      return DPAD_SECTORS[(sector + 8) % 8];
+    }
+    const btn = hit.closest('[data-btn]');
+    return btn ? [btn] : [];
   }
 
   function pressBtn(el) {
@@ -491,39 +513,41 @@
     if (Module) Module._em_set_button(parseInt(el.dataset.btn, 10), 0);
   }
 
-  function setPointerBtn(id, el) {
-    const prev = pointerBtn.get(id) || null;
-    if (prev === el) return;
-    if (prev) releaseBtn(prev);
-    if (el) pressBtn(el);
-    pointerBtn.set(id, el);
+  function setPointerBtns(id, btns) {
+    const prev = pointerBtns.get(id) || new Set();
+    const next = new Set(btns);
+    prev.forEach((el) => { if (!next.has(el)) releaseBtn(el); });
+    next.forEach((el) => { if (!prev.has(el)) pressBtn(el); });
+    pointerBtns.set(id, next);
   }
 
-  document.querySelectorAll('[data-btn]').forEach((el) => {
-    el.addEventListener('pointerdown', (ev) => {
-      ev.preventDefault();
-      if (!audioUnlocked) {
-        // El primer toque del usuario en cualquier botón sirve como el
-        // "gesto" que los navegadores exigen para permitir reproducir audio.
-        audioUnlocked = true;
-        initAudio();
-      }
-      // En táctil el navegador "captura" el dedo en el botón donde empezó;
-      // lo liberamos para poder seguirlo por encima de los demás.
-      if (el.hasPointerCapture(ev.pointerId)) el.releasePointerCapture(ev.pointerId);
-      setPointerBtn(ev.pointerId, el);
-    });
+  document.addEventListener('pointerdown', (ev) => {
+    const btns = btnsAt(ev.clientX, ev.clientY);
+    if (!btns.length) return;
+    ev.preventDefault();
+    if (!audioUnlocked) {
+      // El primer toque del usuario en cualquier botón sirve como el
+      // "gesto" que los navegadores exigen para permitir reproducir audio.
+      audioUnlocked = true;
+      initAudio();
+    }
+    // En táctil el navegador "captura" el dedo en el elemento donde empezó;
+    // lo liberamos para poder seguirlo por encima de los demás.
+    if (ev.target.hasPointerCapture && ev.target.hasPointerCapture(ev.pointerId)) {
+      ev.target.releasePointerCapture(ev.pointerId);
+    }
+    setPointerBtns(ev.pointerId, btns);
   });
 
   document.addEventListener('pointermove', (ev) => {
-    if (!pointerBtn.has(ev.pointerId)) return;
-    setPointerBtn(ev.pointerId, btnAt(ev.clientX, ev.clientY));
+    if (!pointerBtns.has(ev.pointerId)) return;
+    setPointerBtns(ev.pointerId, btnsAt(ev.clientX, ev.clientY));
   });
 
   const endPointer = (ev) => {
-    if (!pointerBtn.has(ev.pointerId)) return;
-    setPointerBtn(ev.pointerId, null);
-    pointerBtn.delete(ev.pointerId);
+    if (!pointerBtns.has(ev.pointerId)) return;
+    setPointerBtns(ev.pointerId, []);
+    pointerBtns.delete(ev.pointerId);
   };
   document.addEventListener('pointerup', endPointer);
   document.addEventListener('pointercancel', endPointer);
