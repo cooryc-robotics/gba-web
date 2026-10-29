@@ -1,0 +1,12 @@
+# No indexar en buscadores
+Header set X-Robots-Tag "noindex, nofollow"
+Options -Indexes
+
+# Tipos correctos para WebAssembly y ROMs
+AddType application/wasm .wasm
+AddType application/octet-stream .gba .gb .gbc
+
+# No cachear index/app para ver los cambios al momento
+<FilesMatch "\.(html|js|json)$">
+  Header set Cache-Control "no-cache"
+</FilesMatch>

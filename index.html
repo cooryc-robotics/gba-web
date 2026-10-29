@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Game Boy Web</title>
+<style>
+  :root {
+    --shell: #5a4fa0;          /* carcasa índigo */
+    --shell-dark: #453b82;
+    --shell-shadow: #2f2760;
+    --page-bg: #17161d;
+    --bezel: #1d1c26;          /* marco gris oscuro de la pantalla */
+    --lcd: #cfd8c4;
+    --dpad: #25242c;
+    --dpad-active: #42404c;
+    --accent: #33304f;         /* botones A/B */
+    --accent-active: #4b4772;
+    --meta: #7a72b5;           /* start/select */
+    --meta-active: #968fcb;
+    --shoulder: #3b336f;
+    --shoulder-active: #5a50a3;
+    --led-off: #4b2a35;
+    --led-on: #5dff8a;
+    --label: #d9d5f3;
+  }
+
+  * {
+    box-sizing: border-box;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--page-bg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    overscroll-behavior: none;
+    touch-action: none;
+    overflow: hidden;
+  }
+
+  #app {
+    display: flex;
+    align-items: stretch;
+    height: 100%;
+    height: 100dvh;
+    max-width: 520px;
+    margin: 0 auto;
+  }
+
+  /* ---- Carcasa ---- */
+  #gb-shell {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: linear-gradient(180deg, var(--shell), var(--shell-dark));
+    border-radius: 22px 22px 0 0;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+
+  /* Gatillos L / R: pestañas pegadas a los bordes, bajo la pantalla */
+  #shoulders {
+    display: flex;
+    justify-content: space-between;
+  }
+
+  /* Todas las teclas juntas, a mitad de camino entre el final de la pantalla
+     y el final de la ventana. */
+  #keys {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 30px;
+    padding-bottom: env(safe-area-inset-bottom);
+    min-height: 0;
+  }
+  .shoulder {
+    width: 40%;
+    height: 38px;
+    border: none;
+    background: var(--shoulder);
+    color: var(--label);
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    box-shadow: 0 2px 0 rgba(0,0,0,0.3);
+  }
+  /* En Game Boy / Color no existen L y R: se ocultan sin mover el resto */
+  body.is-gb #shoulders { visibility: hidden; }
+  #btn-l { border-radius: 0 0 22px 0; }
+  #btn-r { border-radius: 0 0 0 22px; }
+  .shoulder.active { background: var(--shoulder-active); }
+
+  #top-deco {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 22px 2px;
+  }
+
+  #led {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--led-off);
+    box-shadow: inset 0 0 1px rgba(0,0,0,0.4);
+  }
+  #led.on {
+    background: var(--led-on);
+    box-shadow: 0 0 4px 1px var(--led-on);
+  }
+
+  #top-deco .brand {
+    margin: 10px 0px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: var(--label);
+    opacity: 0.55;
+  }
+
+  #screen-wrap {
+    margin: 10px 0px;
+    background: none;
+    border-radius: 0;
+    padding: 0;
+    box-shadow: none;
+    display: flex;
+    justify-content: center;
+  }
+
+  #gb-canvas {
+    display: block;
+    /* La proporción la fija app.js según el juego: 240x160 (GBA) o 160x144 (GB/GBC) */
+    aspect-ratio: var(--ar-w, 240) / var(--ar-h, 160);
+    height: min(46dvh, calc(min(100vw, 520px) * var(--ar-h, 160) / var(--ar-w, 240)));
+    width: auto;
+    background: var(--lcd);
+    border-radius: 0;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    -webkit-user-drag: none;
+    touch-action: none;
+  }
+
+  /* Solo se usa si algo falla al cargar el ROM; el resto del tiempo está oculto. */
+  #hint {
+    display: none;
+    text-align: center;
+    color: var(--label);
+    font-size: 12px;
+    padding: 10px 24px 0;
+  }
+  #hint.show { display: block; }
+
+  #controls {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    padding: 0 22px;
+    gap: 14px;
+  }
+
+  .pad-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  /* D-pad */
+  #dpad {
+    position: relative;
+    width: 132px;
+    height: 132px;
+  }
+  .dpad-btn {
+    position: absolute;
+    background: var(--dpad);
+    border: none;
+  }
+  .dpad-btn.active { background: var(--dpad-active); }
+  #dpad-up    { top: 0;    left: 44px; width: 44px; height: 44px; border-radius: 6px 6px 0 0; }
+  #dpad-down  { bottom: 0; left: 44px; width: 44px; height: 44px; border-radius: 0 0 6px 6px; }
+  #dpad-left  { top: 44px; left: 0;    width: 44px; height: 44px; border-radius: 6px 0 0 6px; }
+  #dpad-right { top: 44px; right: 0;   width: 44px; height: 44px; border-radius: 0 6px 6px 0; }
+  #dpad-center{ top: 44px; left: 44px; width: 44px; height: 44px; background: var(--dpad); }
+
+  /* A/B */
+  #face-buttons {
+    display: flex;
+    align-items: flex-end;
+    gap: 18px;
+    transform: rotate(-20deg);
+  }
+  .face-btn-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+  #btn-b-wrap { margin-top: 22px; }
+  .face-btn {
+    width: 54px;
+    height: 54px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: none;
+    box-shadow: 0 2px 0 rgba(0,0,0,0.3);
+  }
+  .face-btn.active { background: var(--accent-active); }
+  .face-label {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--label);
+    opacity: 0.8;
+  }
+
+  /* Start/Select + toggle rápido */
+  #meta-row {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 20px;
+    transform: rotate(-20deg);
+    margin-top: 20px;
+    margin-bottom: 8px;
+  }
+  .meta-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+  }
+  .meta-btn {
+    width: 56px;
+    height: 18px;
+    border-radius: 10px;
+    background: var(--meta);
+    border: none;
+  }
+  .meta-btn.active { background: var(--meta-active); }
+  .meta-label {
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: var(--label);
+    opacity: 0.75;
+  }
+
+  #fast-toggle {
+    width: 40px;
+    height: 22px;
+    border-radius: 12px;
+    background: var(--meta);
+    border: none;
+    position: relative;
+  }
+  #fast-toggle::after {
+    content: '';
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #efecff;
+    transition: transform 0.15s ease;
+  }
+  #fast-toggle.on { background: var(--led-on); }
+  #fast-toggle.on::after { transform: translateX(18px); }
+
+  /* Botón para volver al menú de juegos */
+  #menu-btn {
+    margin-left: auto;
+    border: none;
+    border-radius: 10px;
+    padding: 5px 12px;
+    background: var(--shoulder);
+    color: var(--label);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+  }
+  #menu-btn:active { background: var(--shoulder-active); }
+
+  /* Menú de selección de juego (pantalla completa, con scroll propio) */
+  #menu {
+    position: fixed;
+    inset: 0;
+    max-width: 520px;
+    margin: 0 auto;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    padding: calc(24px + env(safe-area-inset-top)) 20px calc(24px + env(safe-area-inset-bottom));
+    background: linear-gradient(180deg, var(--shell), var(--shell-dark));
+    overflow-y: auto;
+    touch-action: pan-y;
+  }
+  #menu.hidden { display: none; }
+  #menu h1 {
+    margin: 0 0 6px;
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--label);
+  }
+  #menu-status {
+    min-height: 18px;
+    margin: 0 0 16px;
+    font-size: 13px;
+    color: var(--label);
+    opacity: 0.8;
+  }
+  #menu-status.error { color: #ffb4b4; opacity: 1; }
+  .menu-item {
+    display: block;
+    width: 100%;
+    min-height: 58px;
+    margin: 0 0 10px;
+    padding: 0 18px;
+    border: none;
+    border-radius: 14px;
+    background: var(--shoulder);
+    color: var(--label);
+    font-size: 16px;
+    font-weight: 600;
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    box-shadow: 0 2px 0 rgba(0,0,0,0.3);
+  }
+  .menu-item:active { background: var(--shoulder-active); }
+
+  #menu h2.menu-sub {
+    margin: 14px 0 8px;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    color: var(--label);
+    opacity: 0.7;
+  }
+  .menu-sub.hidden { display: none; }
+
+  /* Juegos guardados en el dispositivo: fila con botón de borrar */
+  .menu-row { display: flex; gap: 8px; margin: 0 0 10px; }
+  .menu-row .menu-item { flex: 1; margin: 0; min-width: 0; }
+  .menu-del {
+    flex: none;
+    width: 58px;
+    border: none;
+    border-radius: 14px;
+    background: var(--shoulder);
+    color: var(--label);
+    font-size: 16px;
+    box-shadow: 0 2px 0 rgba(0,0,0,0.3);
+  }
+  .menu-del:active { background: #7a3b4a; }
+
+  .menu-load {
+    margin-top: 6px;
+    background: transparent;
+    border: 2px dashed rgba(217,213,243,0.45);
+    box-shadow: none;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="gb-shell">
+    <div id="top-deco">
+      <div id="led"></div>
+      <span class="brand">POWER</span>
+      <button id="menu-btn">MENU</button>
+    </div>
+
+    <div id="screen-wrap">
+      <canvas id="gb-canvas" width="240" height="160"></canvas>
+    </div>
+    <p id="hint"></p>
+
+    <div id="keys">
+    <div id="shoulders">
+      <button class="shoulder" id="btn-l" data-btn="9">L</button>
+      <button class="shoulder" id="btn-r" data-btn="8">R</button>
+    </div>
+
+    <div id="controls">
+      <div class="pad-row">
+        <div id="dpad">
+          <button class="dpad-btn" id="dpad-up"    data-btn="6"></button>
+          <button class="dpad-btn" id="dpad-down"  data-btn="7"></button>
+          <button class="dpad-btn" id="dpad-left"  data-btn="5"></button>
+          <button class="dpad-btn" id="dpad-right" data-btn="4"></button>
+          <div class="dpad-btn" id="dpad-center"></div>
+        </div>
+        <div id="face-buttons">
+          <div class="face-btn-wrap" id="btn-b-wrap">
+            <button class="face-btn" id="btn-b" data-btn="1"></button>
+            <span class="face-label">B</span>
+          </div>
+          <div class="face-btn-wrap">
+            <button class="face-btn" id="btn-a" data-btn="0"></button>
+            <span class="face-label">A</span>
+          </div>
+        </div>
+      </div>
+
+      <div id="meta-row">
+        <div class="meta-wrap">
+          <button class="meta-btn" id="btn-select" data-btn="2"></button>
+          <span class="meta-label">SELECT</span>
+        </div>
+        <div class="meta-wrap">
+          <button class="meta-btn" id="btn-start"  data-btn="3"></button>
+          <span class="meta-label">START</span>
+        </div>
+        <div class="meta-wrap">
+          <button id="fast-toggle" aria-label="Modo rapido x2"></button>
+          <span class="meta-label">2X</span>
+        </div>
+      </div>
+    </div>
+    </div>
+  </div>
+</div>
+
+<!-- Menú de selección de juego -->
+<div id="menu">
+  <h1>Selecciona un juego</h1>
+  <p id="menu-status">Cargando emulador…</p>
+  <div id="menu-list"></div>
+  <h2 id="menu-local-title" class="menu-sub hidden">En este dispositivo</h2>
+  <div id="menu-local"></div>
+  <button id="menu-load" class="menu-item menu-load">+ Cargar juego del dispositivo</button>
+  <input type="file" id="menu-file" hidden>
+</div>
+
+<script src="gb.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
