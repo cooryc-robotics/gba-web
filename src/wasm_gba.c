@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <mgba/core/cheats.h>
 #include <mgba/core/config.h>
 #include <mgba/core/core.h>
 #include <mgba/gb/core.h>
@@ -232,3 +233,88 @@ int em_save_changed(void)
 /* Detiene el juego actual (para volver al menú). */
 EMSCRIPTEN_KEEPALIVE
 void em_stop(void) { teardown(); }
+
+/* ---- Estados rápidos ----
+ * em_state_buffer() reserva (o reutiliza) un búfer del tamaño de un estado
+ * del juego actual. em_save_state() lo rellena y devuelve su tamaño;
+ * em_load_state() carga el estado que JS haya copiado en él. */
+
+static uint8_t *state_buf = NULL;
+static size_t state_buf_size = 0;
+
+EMSCRIPTEN_KEEPALIVE
+uint8_t *em_state_buffer(void)
+{
+	if (!core)
+		return NULL;
+	size_t size = core->stateSize(core);
+	if (size > state_buf_size) {
+		free(state_buf);
+		state_buf = malloc(size);
+		state_buf_size = state_buf ? size : 0;
+	}
+	return state_buf;
+}
+
+EMSCRIPTEN_KEEPALIVE
+uint32_t em_state_size(void) { return core ? (uint32_t)core->stateSize(core) : 0; }
+
+EMSCRIPTEN_KEEPALIVE
+uint32_t em_save_state(void)
+{
+	if (!em_state_buffer() || !core->saveState(core, state_buf))
+		return 0;
+	return (uint32_t)core->stateSize(core);
+}
+
+EMSCRIPTEN_KEEPALIVE
+int em_load_state(void)
+{
+	if (!core || !state_buf || state_buf_size < core->stateSize(core))
+		return 0;
+	return core->loadState(core, state_buf) ? 1 : 0;
+}
+
+/* ---- Trucos (GameShark, Action Replay, CodeBreaker, Game Genie) ----
+ * JS escribe los códigos en em_cheat_text() (una línea por código, texto
+ * terminado en 0) y llama a em_cheats_apply(), que sustituye los trucos
+ * activos. Devuelve cuántas líneas se aceptaron. */
+
+#define CHEAT_TEXT_SIZE 16384
+static char cheat_text[CHEAT_TEXT_SIZE];
+
+EMSCRIPTEN_KEEPALIVE
+char *em_cheat_text(void) { return cheat_text; }
+
+EMSCRIPTEN_KEEPALIVE
+uint32_t em_cheat_text_size(void) { return CHEAT_TEXT_SIZE; }
+
+EMSCRIPTEN_KEEPALIVE
+int em_cheats_apply(void)
+{
+	if (!core)
+		return 0;
+	struct mCheatDevice *device = core->cheatDevice(core);
+	if (!device)
+		return 0;
+	mCheatDeviceClear(device);
+
+	cheat_text[CHEAT_TEXT_SIZE - 1] = '\0';
+	struct mCheatSet *set = device->createSet(device, NULL);
+	int accepted = 0;
+	char *line = cheat_text;
+	while (line && *line) {
+		char *next = strchr(line, '\n');
+		if (next)
+			*next++ = '\0';
+		/* Autodetecta el formato (0 = *_CHEAT_AUTODETECT en GBA y GB). */
+		if (*line && mCheatAddLine(set, line, 0))
+			accepted++;
+		line = next;
+	}
+	if (accepted)
+		mCheatAddSet(device, set);
+	else
+		mCheatSetDeinit(set); /* también libera el set */
+	return accepted;
+}
