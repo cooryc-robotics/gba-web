@@ -3,6 +3,9 @@ RewriteEngine On
 RewriteCond %{HTTP_HOST} !^gba\.cooryc\.com$ [NC]
 RewriteRule ^(.*)$ https://gba.cooryc.com/$1 [R=301,L]
 
+# ads.txt de AdSense, generado con el id de editor de config.php
+RewriteRule ^ads\.txt$ api/ads-txt.php [L]
+
 # No indexar en buscadores
 Header set X-Robots-Tag "noindex, nofollow"
 Options -Indexes

@@ -1,7 +1,7 @@
 <?php
 /* auth.php — cuentas de usuario.
  *
- *   GET  auth.php                     → { user: {id, username, premium, theme} | null }
+ *   GET  auth.php                     → { user: {id, username, premium, theme} | null, ads }
  *   POST auth.php?action=register     { username, password }
  *   POST auth.php?action=login        { username, password }
  *   POST auth.php?action=logout
@@ -18,7 +18,7 @@ const FAIL_WINDOW_MIN = 15; // …en este número de minutos
 $action = $_GET['action'] ?? '';
 
 if ($action === '') {
-    json_out(200, ['user' => current_user()]);
+    json_out(200, ['user' => current_user(), 'ads' => ads_config()]);
 }
 
 require_post();
