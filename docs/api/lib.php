@@ -101,6 +101,9 @@ function migrate(PDO $pdo): void {
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4',
         ],
+        3 => [ // id del pago en Mollie (Qonto)
+            'ALTER TABLE orders ADD provider_ref VARCHAR(64) NULL, ADD UNIQUE INDEX (provider_ref)',
+        ],
     ];
 
     $pdo->exec('CREATE TABLE IF NOT EXISTS schema_version (v INT NOT NULL) ENGINE=InnoDB');

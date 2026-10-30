@@ -96,7 +96,7 @@
     if (user) renderSaves();
   }
 
-  /* ---- Premium: pago único con TPV virtual (Redsys) ---- */
+  /* ---- Premium: pago único con Mollie (enlaces de pago de Qonto) ---- */
 
   const premiumBox = document.getElementById('premium-box');
   const THEMES = [
@@ -162,39 +162,30 @@
       const r = await api('pay.php', { method: 'POST' });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data.error || 'HTTP ' + r.status);
-      // La pasarela de Redsys se abre enviando un formulario con la firma.
-      const form = el('form');
-      form.method = 'POST';
-      form.action = data.url;
-      Object.entries(data.fields).forEach(([name, value]) => {
-        const input = el('input');
-        input.type = 'hidden';
-        input.name = name;
-        input.value = value;
-        form.appendChild(input);
-      });
-      document.body.appendChild(form);
-      form.submit();
+      location.href = data.url;
     } catch (e) {
       showToast('No se pudo iniciar el pago (' + (e.message || e) + ')', true);
       btn.disabled = false;
     }
   }
 
-  // Vuelta de la pasarela: el aviso de Redsys al servidor puede tardar unos
-  // segundos en llegar, así que se consulta la cuenta hasta verla premium.
+  // Vuelta de la pasarela (vuelve igual si se paga o se cancela): el
+  // servidor consulta el pago a Mollie hasta que deja de estar pendiente.
   async function handlePaymentReturn() {
-    const result = new URLSearchParams(location.search).get('pago');
-    if (!result) return;
+    if (!new URLSearchParams(location.search).get('pago')) return;
     history.replaceState(null, '', location.pathname);
-    if (result !== 'ok') { showToast('El pago no se ha completado', true); return; }
     showToast('Confirmando el pago…');
     for (let i = 0; i < 15; i++) {
       try {
-        const data = await (await api('auth.php')).json();
-        if (data.user && data.user.premium) {
-          setUser(data.user);
+        const data = await (await api('pay.php')).json();
+        if (data.premium) {
+          const me = await (await api('auth.php')).json();
+          if (me.user) setUser(me.user);
           showToast('¡Gracias! Ya eres Premium');
+          return;
+        }
+        if (data.status === 'failed' || data.status === 'none') {
+          showToast('El pago no se ha completado', true);
           return;
         }
       } catch (e) { /* reintenta */ }

@@ -1,63 +1,56 @@
 <?php
-/* pay.php — pago único de la cuenta premium con un TPV virtual Redsys
- * (el que dan Santander, CaixaBank, BBVA, Sabadell…).
+/* pay.php — pago único de la cuenta premium con Mollie, la pasarela de los
+ * enlaces de pago de Qonto (el dinero llega a la cuenta de Qonto).
  *
- *   POST pay.php   → { url, fields: { Ds_SignatureVersion, Ds_MerchantParameters, Ds_Signature } }
+ *   POST pay.php   → { url }   página de pago de Mollie a la que ir
+ *   GET  pay.php   → { status: none|pending|paid|failed, premium }
+ *                    consulta el último pedido (al volver de la pasarela)
  *
- * El navegador envía esos campos en un formulario a `url` (la pasarela de
- * Redsys). Al terminar, Redsys avisa a redsys.php, que activa la cuenta.
+ * Mollie avisa además a mollie.php cuando cambia el estado del pago.
  *
  * Configuración (en gba-private/config.php):
- *   'redsys' => [
- *       'merchant' => '123456789',      // Número de comercio (FUC)
- *       'terminal' => '1',
- *       'key'      => '…',              // Clave secreta SHA-256 del comercio
- *       'live'     => false,            // true = cobros reales; false = entorno de pruebas
- *   ],
+ *   'mollie'      => ['key' => 'live_…'],   // o 'test_…' para pruebas
  *   'price_cents' => 499,
  *   'site_url'    => 'https://gba.cooryc.com',
  */
 
 declare(strict_types=1);
 require __DIR__ . '/lib.php';
-require __DIR__ . '/redsys-lib.php';
+require __DIR__ . '/mollie-lib.php';
+
+$user = require_user();
+
+if ($_SERVER['REQUEST_METHOD'] === 'GET') {
+    $st = db()->prepare('SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC LIMIT 1');
+    $st->execute([$user['id']]);
+    $order = $st->fetch();
+    $status = $order ? mollie_sync_order($order) : 'none';
+    json_out(200, ['status' => $status, 'premium' => $user['premium'] || $status === 'paid']);
+}
 
 require_post();
-$user = require_user();
 if ($user['premium']) fail(409, 'Tu cuenta ya es premium');
+if (!mollie_config()) fail(503, 'Los pagos aún no están configurados');
 
 $cfg = config();
-$rs = $cfg['redsys'] ?? null;
-if (!$rs || empty($rs['merchant']) || empty($rs['key'])) fail(503, 'Los pagos aún no están configurados');
 $price = (int)($cfg['price_cents'] ?? 499);
 $site = rtrim((string)($cfg['site_url'] ?? 'https://gba.cooryc.com'), '/');
 
-// Redsys pide 12 caracteres, los 4 primeros numéricos.
-$order = sprintf('%04d', random_int(0, 9999)) . bin2hex(random_bytes(4));
+$order = bin2hex(random_bytes(6));
 db()->prepare('INSERT INTO orders (order_id, user_id, amount_cents, status, created_at) VALUES (?, ?, ?, ?, NOW())')
     ->execute([$order, $user['id'], $price, 'pending']);
 
-$params = [
-    'DS_MERCHANT_AMOUNT' => (string)$price,
-    'DS_MERCHANT_ORDER' => $order,
-    'DS_MERCHANT_MERCHANTCODE' => (string)$rs['merchant'],
-    'DS_MERCHANT_CURRENCY' => '978', // euros
-    'DS_MERCHANT_TRANSACTIONTYPE' => '0', // autorización (cobro normal)
-    'DS_MERCHANT_TERMINAL' => (string)($rs['terminal'] ?? '1'),
-    'DS_MERCHANT_MERCHANTURL' => $site . '/api/redsys.php',
-    'DS_MERCHANT_URLOK' => $site . '/?pago=ok',
-    'DS_MERCHANT_URLKO' => $site . '/?pago=ko',
-    'DS_MERCHANT_PRODUCTDESCRIPTION' => 'Game Boy Web Premium',
-    'DS_MERCHANT_TITULAR' => $user['username'],
-    'DS_MERCHANT_CONSUMERLANGUAGE' => '001', // español
-];
-$encoded = base64_encode(json_encode($params));
-
-json_out(200, [
-    'url' => !empty($rs['live']) ? 'https://sis.redsys.es/sis/realizarPago' : 'https://sis-t.redsys.es:25443/sis/realizarPago',
-    'fields' => [
-        'Ds_SignatureVersion' => 'HMAC_SHA256_V1',
-        'Ds_MerchantParameters' => $encoded,
-        'Ds_Signature' => redsys_signature((string)$rs['key'], $order, $encoded),
-    ],
+$payment = mollie_request('POST', '/payments', [
+    'amount' => ['currency' => 'EUR', 'value' => sprintf('%.2f', $price / 100)],
+    'description' => 'Game Boy Web Premium (' . $user['username'] . ')',
+    'redirectUrl' => $site . '/?pago=' . $order,
+    'webhookUrl' => $site . '/api/mollie.php',
+    'locale' => 'es_ES',
+    'metadata' => ['order_id' => $order, 'user_id' => $user['id']],
 ]);
+
+$url = $payment['_links']['checkout']['href'] ?? '';
+if (empty($payment['id']) || !$url) fail(502, 'La pasarela de pago no responde');
+db()->prepare('UPDATE orders SET provider_ref = ? WHERE order_id = ?')->execute([$payment['id'], $order]);
+
+json_out(200, ['url' => $url]);
