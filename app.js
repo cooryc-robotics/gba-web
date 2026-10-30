@@ -101,16 +101,16 @@
    * Con AdSense configurado en el servidor se muestra su anuncio; si no,
    * un aviso propio para pasarse a Premium. Nunca durante la partida. */
 
-  const adBand = document.getElementById('ad-band');
+  const stripEl = document.getElementById('menu-strip');
   let adsConfig = null;   // { client, slot } que manda auth.php
   let adLoaded = false;
 
   function renderAd() {
     const show = !!currentUser && !currentUser.premium;
-    adBand.classList.toggle('hidden', !show);
-    menu.classList.toggle('has-ad', show);
+    stripEl.classList.toggle('hidden', !show);
+    menu.classList.toggle('with-strip', show);
     if (!show || adLoaded) return;
-    adBand.innerHTML = '';
+    stripEl.innerHTML = '';
     if (adsConfig && adsConfig.client && adsConfig.slot) {
       adLoaded = true;
       const s = document.createElement('script');
@@ -122,14 +122,14 @@
       ins.style.cssText = 'display:inline-block;width:320px;height:50px';
       ins.dataset.adClient = adsConfig.client;
       ins.dataset.adSlot = adsConfig.slot;
-      adBand.appendChild(ins);
+      stripEl.appendChild(ins);
       (window.adsbygoogle = window.adsbygoogle || []).push({});
       return;
     }
-    const b = el('button', 'house-ad');
+    const b = el('button', 'strip-promo');
     b.innerHTML = 'Quita los anuncios y desbloquea los extras · <b>Premium 4,99 €</b>';
     b.addEventListener('click', () => premiumBox.scrollIntoView({ behavior: 'smooth' }));
-    adBand.appendChild(b);
+    stripEl.appendChild(b);
   }
 
   /* ---- Premium: pago único con Mollie (enlaces de pago de Qonto) ---- */
