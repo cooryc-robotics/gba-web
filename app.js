@@ -89,9 +89,136 @@
     currentUser = user;
     loginEl.classList.toggle('hidden', !!user);
     menuUser.classList.toggle('hidden', !user);
-    document.getElementById('menu-username').textContent = user ? 'Sesión: ' + user.username : '';
+    document.getElementById('menu-username').textContent = user
+      ? (user.premium ? '★ ' : '') + 'Sesión: ' + user.username : '';
+    applyTheme(user && user.premium ? user.theme : null);
+    renderPremium();
     if (user) renderSaves();
   }
+
+  /* ---- Premium: pago único con TPV virtual (Redsys) ---- */
+
+  const premiumBox = document.getElementById('premium-box');
+  const THEMES = [
+    ['indigo', 'Índigo'], ['atomic', 'Atomic'], ['kiwi', 'Kiwi'],
+    ['coral', 'Coral'], ['black', 'Negro'], ['gold', 'Oro'],
+  ];
+
+  function applyTheme(theme) {
+    if (theme && theme !== 'indigo') document.body.dataset.theme = theme;
+    else delete document.body.dataset.theme;
+  }
+
+  function renderPremium() {
+    premiumBox.innerHTML = '';
+    if (!currentUser) return;
+    if (!currentUser.premium) {
+      premiumBox.className = 'premium-card';
+      premiumBox.appendChild(el('h2', null, 'Premium · 4,99 € (pago único)'));
+      const ul = el('ul');
+      [
+        'Partidas en la nube de todos tus juegos (gratis: 3)',
+        'Estados rápidos: guarda y carga en cualquier momento, en la nube',
+        'Historial de las últimas 10 partidas de cada juego',
+        'Exportar e importar partidas .sav',
+        'Velocidad x4 (además de x2)',
+        'Trucos (GameShark, Action Replay, CodeBreaker, Game Genie)',
+        'Mandos Bluetooth / USB',
+        'Temas de colores para la consola',
+      ].forEach((t) => ul.appendChild(el('li', null, t)));
+      premiumBox.appendChild(ul);
+      const buy = el('button', 'menu-item buy-btn', 'Hazte Premium por 4,99 €');
+      buy.addEventListener('click', () => startPayment(buy));
+      premiumBox.appendChild(buy);
+      return;
+    }
+    premiumBox.className = 'premium-card is-premium';
+    premiumBox.appendChild(el('h2', null, '★ Eres Premium'));
+    premiumBox.appendChild(el('p', 'premium-sub', 'Color de la consola'));
+    const row = el('div', 'theme-row');
+    THEMES.forEach(([id, label]) => {
+      const b = el('button', 'theme-chip' + ((currentUser.theme || 'indigo') === id ? ' on' : ''), label);
+      b.dataset.themeChip = id;
+      b.addEventListener('click', () => chooseTheme(id));
+      row.appendChild(b);
+    });
+    premiumBox.appendChild(row);
+  }
+
+  async function chooseTheme(id) {
+    applyTheme(id);
+    currentUser.theme = id;
+    renderPremium();
+    try {
+      await api('auth.php?action=settings', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ theme: id }),
+      });
+    } catch (e) { /* se queda aplicado en esta sesión */ }
+  }
+
+  async function startPayment(btn) {
+    btn.disabled = true;
+    try {
+      const r = await api('pay.php', { method: 'POST' });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || 'HTTP ' + r.status);
+      // La pasarela de Redsys se abre enviando un formulario con la firma.
+      const form = el('form');
+      form.method = 'POST';
+      form.action = data.url;
+      Object.entries(data.fields).forEach(([name, value]) => {
+        const input = el('input');
+        input.type = 'hidden';
+        input.name = name;
+        input.value = value;
+        form.appendChild(input);
+      });
+      document.body.appendChild(form);
+      form.submit();
+    } catch (e) {
+      showToast('No se pudo iniciar el pago (' + (e.message || e) + ')', true);
+      btn.disabled = false;
+    }
+  }
+
+  // Vuelta de la pasarela: el aviso de Redsys al servidor puede tardar unos
+  // segundos en llegar, así que se consulta la cuenta hasta verla premium.
+  async function handlePaymentReturn() {
+    const result = new URLSearchParams(location.search).get('pago');
+    if (!result) return;
+    history.replaceState(null, '', location.pathname);
+    if (result !== 'ok') { showToast('El pago no se ha completado', true); return; }
+    showToast('Confirmando el pago…');
+    for (let i = 0; i < 15; i++) {
+      try {
+        const data = await (await api('auth.php')).json();
+        if (data.user && data.user.premium) {
+          setUser(data.user);
+          showToast('¡Gracias! Ya eres Premium');
+          return;
+        }
+      } catch (e) { /* reintenta */ }
+      await new Promise((res) => setTimeout(res, 2000));
+    }
+    showToast('El pago está tardando en confirmarse. Recarga la página en un rato.', true);
+  }
+
+  document.getElementById('delete-account').addEventListener('click', async () => {
+    const password = window.prompt('Se borrarán tu cuenta y todas tus partidas, estados y trucos. No se puede deshacer.\n\nEscribe tu contraseña para confirmar:');
+    if (!password) return;
+    try {
+      const r = await api('auth.php?action=delete', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || 'HTTP ' + r.status);
+      setLoginMode(false);
+      setUser(null);
+      showToast('Cuenta borrada');
+    } catch (e) {
+      showToast('No se pudo borrar la cuenta (' + (e.message || e) + ')', true);
+    }
+  });
 
   function setLoginMode(reg) {
     registering = reg;
@@ -132,7 +259,10 @@
 
   api('auth.php')
     .then((r) => r.json())
-    .then((data) => setUser(data.user || null))
+    .then((data) => {
+      setUser(data.user || null);
+      if (data.user) handlePaymentReturn();
+    })
     .catch(() => {
       setUser(null);
       loginStatus.textContent = 'No se puede conectar con el servidor';
@@ -140,7 +270,7 @@
 
   function buildMenu(list) {
     menuList.innerHTML = '';
-    setMenuStatus(list.length ? '' : 'No hay juegos en el servidor: carga uno de tu dispositivo.');
+    setMenuStatus(list.length ? '' : 'Carga un juego (.gba, .gb o .gbc) desde tu dispositivo.');
     list.forEach((entry) => {
       const btn = document.createElement('button');
       btn.className = 'menu-item';
@@ -351,6 +481,7 @@
       return false;
     }
     applyVideoSize(gb);
+    loadCheatsForGame();
 
     const led = document.getElementById('led');
     if (led) led.classList.add('on');
@@ -374,6 +505,8 @@
     document.querySelectorAll('[data-btn].active').forEach((el) => el.classList.remove('active'));
     pointerBtns.clear();
     btnCount.clear();
+    padState.fill(false);
+    gamePanel.classList.add('hidden');
 
     Module._em_stop();
     saveKey = null;
@@ -396,13 +529,21 @@
 
   let uploading = false;
   let nextUpload = null;
+  let cloudFull = false; // la cuenta gratis ya tiene el máximo de juegos en la nube
 
   function pendingKey() { return 'gbapending::' + saveKey; }
 
+  // Clave de un juego en el servidor: nombre del archivo + tamaño, sin
+  // importar si se cargó del dispositivo o de la lista del servidor.
+  function gameCloudKey(fileName, romSize) {
+    return fileName.replace(/^(roms\/|local:)/, '') + '::' + romSize;
+  }
+
   async function setupSaveSlot(fileName, romSize) {
-    cloudKey = fileName + '::' + romSize;
+    cloudKey = gameCloudKey(fileName, romSize);
     saveKey = 'gbasave::' + (currentUser ? currentUser.id : 0) + '::' + cloudKey;
     lastSavedB64 = null;
+    cloudFull = false;
     const size = Module._em_get_save_size();
 
     let local = null, pending = false;
@@ -419,6 +560,7 @@
         const r = await api('saves.php?key=' + encodeURIComponent(cloudKey));
         if (r.ok) bytes = new Uint8Array(await r.arrayBuffer());
         else if (r.status !== 404) throw new Error('HTTP ' + r.status);
+        else if (local) { bytes = base64ToU8(local); pending = true; } // aún no está en la nube
       } catch (err) {
         if (local) bytes = base64ToU8(local);
         showToast('Sin conexión: se usa la copia de este dispositivo', true);
@@ -448,6 +590,10 @@
       localStorage.setItem(saveKey, b64);
       localStorage.setItem(pendingKey(), '1');
     } catch (e) { /* sin localStorage: depende solo de la subida */ }
+    if (cloudFull) {
+      if (isLeaving !== true) showToast('Partida guardada en este dispositivo');
+      return;
+    }
     uploadSave(isLeaving === true);
   }
 
@@ -477,6 +623,12 @@
         keepalive: !!isLeaving && body.length <= 60000,
       });
       if (r.status === 401) throw new Error('la sesión ha caducado');
+      if (r.status === 402) {
+        // Límite de la cuenta gratis: se sigue guardando en el dispositivo.
+        cloudFull = true;
+        const data = await r.json().catch(() => ({}));
+        throw new Error((data.error || 'límite de la cuenta gratis') + '. Con Premium se guardan todos');
+      }
       if (!r.ok) throw new Error('HTTP ' + r.status);
       try {
         if (localStorage.getItem(key) === b64) localStorage.removeItem('gbapending::' + key);
@@ -492,27 +644,170 @@
   // Reintenta de vez en cuando lo que no se pudo subir.
   setInterval(() => {
     try {
-      if (saveKey && !uploading && localStorage.getItem(pendingKey()) === '1') uploadSave();
+      if (saveKey && !uploading && !cloudFull && localStorage.getItem(pendingKey()) === '1') uploadSave();
     } catch (e) { /* nada */ }
   }, 30000);
 
-  // Lista en el menú las partidas guardadas en la cuenta.
+  /* ---- Mis partidas: lista de la nube, exportar/importar .sav, historial ---- */
+
+  const savesList = document.getElementById('saves-list');
+  const savFile = document.getElementById('sav-file');
+  let importKey = null; // juego al que va el .sav que se está importando
+
+  function gameName(key) {
+    return key.slice(0, key.lastIndexOf('::')).replace(/^(roms\/|local:)/, '').replace(/\.(gba|gbc|gb)$/i, '');
+  }
+
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+
+  function premiumOnly() {
+    if (currentUser && currentUser.premium) return true;
+    showToast('Función Premium', true);
+    document.getElementById('premium-box').scrollIntoView({ behavior: 'smooth' });
+    return false;
+  }
+
+  // Al cambiar la partida desde el menú, la copia local de ese juego deja de valer.
+  function forgetLocalSave(key) {
+    try {
+      const k = 'gbasave::' + currentUser.id + '::' + key;
+      localStorage.removeItem(k);
+      localStorage.removeItem('gbapending::' + k);
+    } catch (e) { /* nada */ }
+  }
+
   async function renderSaves() {
-    const el = document.getElementById('menu-saves');
-    if (!el || !currentUser) return;
+    const info = document.getElementById('menu-saves');
+    if (!info || !currentUser) return;
+    savesList.innerHTML = '';
     try {
       const r = await api('saves.php');
       if (!r.ok) throw new Error('HTTP ' + r.status);
-      const items = (await r.json()).saves.map((s) => {
-        const name = s.key.slice(0, s.key.lastIndexOf('::'))
-          .replace(/^(roms\/|local:)/, '').replace(/\.(gba|gbc|gb)$/i, '');
-        return name + ' (' + new Date(s.updated_at).toLocaleString() + ')';
-      });
-      el.textContent = items.length
-        ? 'Partidas guardadas en tu cuenta: ' + items.join(' · ')
-        : 'Aún no hay partidas guardadas en tu cuenta.';
+      const { saves, limit } = await r.json();
+      info.textContent = !saves.length
+        ? 'Aún no hay partidas guardadas en tu cuenta.'
+        : limit ? saves.length + ' de ' + limit + ' juegos en la nube (cuenta gratis).' : '';
+      saves.forEach((s) => savesList.appendChild(saveRow(s)));
     } catch (e) {
-      el.textContent = 'No se pudo consultar las partidas guardadas (' + (e.message || e) + ').';
+      info.textContent = 'No se pudo consultar las partidas guardadas (' + (e.message || e) + ').';
+    }
+  }
+
+  function saveRow(s) {
+    const row = el('div', 'save-row');
+    const head = el('div', 'save-head');
+    head.appendChild(el('span', 'save-name', gameName(s.key)));
+    head.appendChild(el('span', 'save-date', new Date(s.updated_at).toLocaleString()));
+    row.appendChild(head);
+
+    const actions = el('div', 'save-actions');
+    const exp = el('button', 'chip', 'Exportar .sav');
+    exp.addEventListener('click', () => premiumOnly() && exportSave(s.key));
+    const imp = el('button', 'chip', 'Importar .sav');
+    imp.addEventListener('click', () => {
+      if (!premiumOnly()) return;
+      importKey = s.key;
+      savFile.click();
+    });
+    const hist = el('button', 'chip', 'Historial');
+    const histBox = el('div', 'save-history hidden');
+    hist.addEventListener('click', () => premiumOnly() && toggleHistory(s.key, histBox));
+    [exp, imp, hist].forEach((b) => actions.appendChild(b));
+    row.appendChild(actions);
+    row.appendChild(histBox);
+    return row;
+  }
+
+  // Tamaños estándar de partida (EEPROM, SRAM, Flash): el .sav exportado se
+  // rellena hasta el primero que quepa, que es lo que esperan otros emuladores.
+  const SAV_SIZES = [512, 8192, 32768, 65536, 131072];
+
+  async function exportSave(key) {
+    try {
+      const r = await api('saves.php?key=' + encodeURIComponent(key));
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const data = new Uint8Array(await r.arrayBuffer());
+      const size = SAV_SIZES.find((n) => n >= data.length) || data.length;
+      const out = new Uint8Array(size).fill(0xFF);
+      out.set(data);
+      const a = el('a');
+      a.href = URL.createObjectURL(new Blob([out], { type: 'application/octet-stream' }));
+      a.download = gameName(key) + '.sav';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    } catch (e) {
+      showToast('No se pudo exportar (' + (e.message || e) + ')', true);
+    }
+  }
+
+  async function putSave(key, bytes) {
+    let end = bytes.length;
+    while (end > 0 && bytes[end - 1] === 0xFF) end--;
+    const r = await api('saves.php?key=' + encodeURIComponent(key), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: bytes.slice(0, end),
+    });
+    if (!r.ok) {
+      const data = await r.json().catch(() => ({}));
+      throw new Error(data.error || 'HTTP ' + r.status);
+    }
+    forgetLocalSave(key);
+  }
+
+  savFile.addEventListener('change', async () => {
+    const file = savFile.files && savFile.files[0];
+    savFile.value = '';
+    if (!file || !importKey) return;
+    if (file.size > 131072) { showToast('Ese archivo es demasiado grande para ser una partida', true); return; }
+    if (!window.confirm('¿Sustituir la partida de "' + gameName(importKey) + '" por ' + file.name + '?')) return;
+    try {
+      await putSave(importKey, new Uint8Array(await file.arrayBuffer()));
+      showToast('Partida importada');
+      renderSaves();
+    } catch (e) {
+      showToast('No se pudo importar (' + (e.message || e) + ')', true);
+    }
+  });
+
+  async function toggleHistory(key, box) {
+    if (!box.classList.contains('hidden')) { box.classList.add('hidden'); return; }
+    box.classList.remove('hidden');
+    box.textContent = 'Cargando…';
+    try {
+      const r = await api('saves.php?history=1&key=' + encodeURIComponent(key));
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const { versions } = await r.json();
+      box.textContent = versions.length ? '' : 'Todavía no hay versiones anteriores.';
+      versions.forEach((v) => {
+        const line = el('div', 'history-row');
+        line.appendChild(el('span', null, new Date(v.saved_at).toLocaleString()));
+        const btn = el('button', 'chip', 'Restaurar');
+        btn.addEventListener('click', () => restoreVersion(key, v));
+        line.appendChild(btn);
+        box.appendChild(line);
+      });
+    } catch (e) {
+      box.textContent = 'No se pudo cargar el historial (' + (e.message || e) + ').';
+    }
+  }
+
+  async function restoreVersion(key, v) {
+    if (!window.confirm('¿Volver a la partida del ' + new Date(v.saved_at).toLocaleString() + '?\n(La actual quedará en el historial.)')) return;
+    try {
+      const r = await api('saves.php?key=' + encodeURIComponent(key) + '&version=' + v.id);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      await putSave(key, new Uint8Array(await r.arrayBuffer()));
+      showToast('Partida restaurada');
+      renderSaves();
+    } catch (e) {
+      showToast('No se pudo restaurar (' + (e.message || e) + ')', true);
     }
   }
 
@@ -566,13 +861,15 @@
   // frames de GBA toca correr, independientemente de a qué frecuencia
   // vaya la pantalla.
   const GB_FRAME_MS = 1000 / 59.7275;
-  const MAX_FRAMES_PER_TICK = 8; // margen suficiente para cuando el modo rapido duplica las que hacen falta por tick
+  const MAX_FRAMES_PER_TICK = 12; // margen para x4 con pantallas a 30 Hz
   let lastTime = null;
   let accumulator = 0;
   let fastMode = false;
+  let speed = 1; // 1, 2 o 4
 
   function frame(now) {
     if (!running) return;
+    pollGamepads();
 
     if (lastTime === null) lastTime = now;
     let elapsed = now - lastTime;
@@ -583,9 +880,9 @@
     if (elapsed > 1000) elapsed = GB_FRAME_MS;
     accumulator += elapsed;
 
-    // Modo rápido: al doble de velocidad simplemente exigimos la mitad de
-    // tiempo real por cada frame de Game Boy que toca correr.
-    const frameMs = fastMode ? GB_FRAME_MS / 2 : GB_FRAME_MS;
+    // Modo rápido: a x2 (o x4) simplemente exigimos la mitad (o la cuarta
+    // parte) de tiempo real por cada frame de Game Boy que toca correr.
+    const frameMs = GB_FRAME_MS / speed;
 
     let framesRun = 0;
     while (accumulator >= frameMs && framesRun < MAX_FRAMES_PER_TICK) {
@@ -749,12 +1046,20 @@
   // Evita el gesto de "pull to refresh" / zoom por doble tap en iOS/Android.
   document.addEventListener('touchmove', (e) => {
     // El menú de juegos necesita poder hacer scroll.
-    if (e.target.closest && e.target.closest('#menu')) return;
+    if (e.target.closest && e.target.closest('#menu, #game-panel, #login')) return;
     e.preventDefault();
   }, { passive: false });
 
-  /* ---- Toggle de modo rápido (x2) ---- */
+  /* ---- Toggle de modo rápido (x2; con Premium también x4) ---- */
   const fastToggle = document.getElementById('fast-toggle');
+  const fastLabel = document.getElementById('fast-label');
+  function setSpeed(n) {
+    speed = n;
+    fastMode = n > 1;
+    fastToggle.classList.toggle('on', fastMode);
+    fastToggle.classList.toggle('x4', n === 4);
+    if (fastLabel) fastLabel.textContent = n === 4 ? '4X' : '2X';
+  }
   if (fastToggle) {
     fastToggle.addEventListener('pointerdown', (ev) => {
       ev.preventDefault();
@@ -762,8 +1067,197 @@
         audioUnlocked = true;
         initAudio();
       }
-      fastMode = !fastMode;
-      fastToggle.classList.toggle('on', fastMode);
+      const premium = currentUser && currentUser.premium;
+      setSpeed(speed === 1 ? 2 : speed === 2 && premium ? 4 : 1);
     });
+  }
+
+  /* ---- Panel EXTRAS (Premium): estados rápidos y trucos ---- */
+
+  const extrasBtn = document.getElementById('extras-btn');
+  const gamePanel = document.getElementById('game-panel');
+  const statesList = document.getElementById('states-list');
+  const cheatsText = document.getElementById('cheats-text');
+  const cheatsStatus = document.getElementById('cheats-status');
+  const STATE_SLOTS = 3;
+
+  function pauseGame() {
+    running = false;
+    cancelAnimationFrame(rafHandle);
+  }
+
+  function resumeGame() {
+    if (!saveKey || running) return;
+    running = true;
+    lastTime = null;
+    accumulator = 0;
+    rafHandle = requestAnimationFrame(frame);
+  }
+
+  extrasBtn.addEventListener('click', () => {
+    if (!saveKey) return;
+    pauseGame();
+    const premium = currentUser && currentUser.premium;
+    gamePanel.classList.toggle('locked', !premium);
+    gamePanel.classList.remove('hidden');
+    if (premium) renderStates();
+  });
+
+  document.getElementById('panel-close').addEventListener('click', () => {
+    gamePanel.classList.add('hidden');
+    resumeGame();
+  });
+  document.getElementById('panel-premium').addEventListener('click', () => {
+    gamePanel.classList.add('hidden');
+    goToMenu();
+    premiumBox.scrollIntoView();
+  });
+
+  async function renderStates() {
+    statesList.textContent = 'Cargando…';
+    let slots = [];
+    try {
+      const r = await api('states.php?key=' + encodeURIComponent(cloudKey));
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      slots = (await r.json()).slots;
+    } catch (e) {
+      statesList.textContent = 'No se pudieron cargar los estados (' + (e.message || e) + ').';
+      return;
+    }
+    statesList.textContent = '';
+    for (let n = 1; n <= STATE_SLOTS; n++) {
+      const info = slots.find((s) => s.slot === n);
+      const row = el('div', 'state-row');
+      row.appendChild(el('span', 'state-name', 'Hueco ' + n));
+      row.appendChild(el('span', 'state-date', info ? new Date(info.updated_at).toLocaleString() : 'vacío'));
+      const save = el('button', 'chip', 'Guardar');
+      save.addEventListener('click', () => saveState(n));
+      const load = el('button', 'chip', 'Cargar');
+      load.disabled = !info;
+      load.addEventListener('click', () => loadState(n));
+      row.appendChild(save);
+      row.appendChild(load);
+      statesList.appendChild(row);
+    }
+  }
+
+  // Los estados ocupan ~400 KiB; se suben comprimidos con gzip si el
+  // navegador lo permite (casi todo es memoria repetida).
+  async function gzip(u8, decompress) {
+    const Stream = decompress ? window.DecompressionStream : window.CompressionStream;
+    if (!Stream) return null;
+    const s = new Blob([u8]).stream().pipeThrough(new Stream('gzip'));
+    return new Uint8Array(await new Response(s).arrayBuffer());
+  }
+
+  async function saveState(n) {
+    const size = Module._em_save_state();
+    if (!size) { showToast('No se pudo crear el estado', true); return; }
+    const ptr = Module._em_state_buffer();
+    const raw = Module.HEAPU8.slice(ptr, ptr + size);
+    try {
+      const body = (await gzip(raw)) || raw;
+      const r = await api('states.php?key=' + encodeURIComponent(cloudKey) + '&slot=' + n, {
+        method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body,
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      showToast('Estado ' + n + ' guardado');
+      renderStates();
+    } catch (e) {
+      showToast('No se pudo guardar el estado (' + (e.message || e) + ')', true);
+    }
+  }
+
+  async function loadState(n) {
+    try {
+      const r = await api('states.php?key=' + encodeURIComponent(cloudKey) + '&slot=' + n);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      let data = new Uint8Array(await r.arrayBuffer());
+      if (data[0] === 0x1f && data[1] === 0x8b) data = await gzip(data, true);
+      if (!data || data.length !== Module._em_state_size()) throw new Error('el estado no es de este juego');
+      const ptr = Module._em_state_buffer();
+      Module.HEAPU8.set(data, ptr);
+      if (!Module._em_load_state()) throw new Error('el emulador lo rechazó');
+      showToast('Estado ' + n + ' cargado');
+      gamePanel.classList.add('hidden');
+      resumeGame();
+    } catch (e) {
+      showToast('No se pudo cargar el estado (' + (e.message || e) + ')', true);
+    }
+  }
+
+  // Trucos: se guardan por juego en la cuenta y se aplican al arrancar.
+  function applyCheats(text) {
+    const bytes = new TextEncoder().encode(text.replace(/\r/g, ''));
+    const max = Module._em_cheat_text_size() - 1;
+    if (bytes.length > max) return -1;
+    const ptr = Module._em_cheat_text();
+    Module.HEAPU8.set(bytes, ptr);
+    Module.HEAPU8[ptr + bytes.length] = 0;
+    return Module._em_cheats_apply();
+  }
+
+  async function loadCheatsForGame() {
+    cheatsText.value = '';
+    cheatsStatus.textContent = '';
+    if (!currentUser || !currentUser.premium || !cloudKey) return;
+    try {
+      const r = await api('cheats.php?key=' + encodeURIComponent(cloudKey));
+      if (!r.ok) return;
+      const { codes } = await r.json();
+      cheatsText.value = codes;
+      if (codes.trim()) {
+        const n = applyCheats(codes);
+        cheatsStatus.textContent = n + ' código(s) activos';
+      }
+    } catch (e) { /* sin trucos */ }
+  }
+
+  document.getElementById('cheats-apply').addEventListener('click', async () => {
+    const codes = cheatsText.value;
+    const n = applyCheats(codes);
+    if (n < 0) { cheatsStatus.textContent = 'Demasiados códigos'; return; }
+    const lines = codes.split('\n').filter((l) => l.trim()).length;
+    cheatsStatus.textContent = codes.trim()
+      ? n + ' de ' + lines + ' línea(s) aceptadas' + (n < lines ? ' (revisa el formato de las demás)' : '')
+      : 'Trucos desactivados';
+    try {
+      await api('cheats.php?key=' + encodeURIComponent(cloudKey), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ codes }),
+      });
+    } catch (e) { cheatsStatus.textContent += ' · no se pudieron guardar en tu cuenta'; }
+  });
+
+  /* ---- Mandos (Gamepad API, Premium) ---- */
+  // Distribución estándar: el botón de la derecha (B de Xbox / círculo) es
+  // la A de Game Boy, como en los mandos de Nintendo.
+  const PAD_MAP = [
+    [1, 0], [0, 1], [8, 2], [9, 3], [15, 4], [14, 5], [12, 6], [13, 7], [5, 8], [4, 9],
+  ]; // [botón del mando, botón de Game Boy]
+  const padState = new Array(10).fill(false);
+  let padNoticed = false;
+
+  function pollGamepads() {
+    if (!navigator.getGamepads || !currentUser || !currentUser.premium) return;
+    const pads = navigator.getGamepads();
+    const now = new Array(10).fill(false);
+    let any = false;
+    for (const pad of pads) {
+      if (!pad) continue;
+      any = true;
+      PAD_MAP.forEach(([pb, gb]) => { if (pad.buttons[pb] && pad.buttons[pb].pressed) now[gb] = true; });
+      const [ax, ay] = pad.axes;
+      if (ax > 0.5) now[4] = true;
+      if (ax < -0.5) now[5] = true;
+      if (ay < -0.5) now[6] = true;
+      if (ay > 0.5) now[7] = true;
+    }
+    if (any && !padNoticed) { padNoticed = true; showToast('Mando conectado'); }
+    for (let b = 0; b < 10; b++) {
+      if (now[b] !== padState[b]) {
+        padState[b] = now[b];
+        Module._em_set_button(b, now[b] ? 1 : 0);
+      }
+    }
   }
 })();

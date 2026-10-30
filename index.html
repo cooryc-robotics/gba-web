@@ -25,6 +25,28 @@
     --label: #d9d5f3;
   }
 
+  /* Temas de la consola (Premium) */
+  body[data-theme="atomic"] {
+    --shell: #6b4f8f; --shell-dark: #3f2d5c; --shoulder: #4a3570; --shoulder-active: #6c52a0;
+    --accent: #2b1f3f; --accent-active: #4a3570; --meta: #9b86c2; --meta-active: #b7a6d8; --label: #eee6ff;
+  }
+  body[data-theme="kiwi"] {
+    --shell: #6faa3c; --shell-dark: #4d7f24; --shoulder: #3f6b1c; --shoulder-active: #57902a;
+    --accent: #2c4a14; --accent-active: #436c20; --meta: #94c96a; --meta-active: #b0dc8c; --label: #f1ffe4;
+  }
+  body[data-theme="coral"] {
+    --shell: #e0676b; --shell-dark: #b54649; --shoulder: #963a3d; --shoulder-active: #c04f53;
+    --accent: #6e2629; --accent-active: #963a3d; --meta: #f19a9c; --meta-active: #f6b8b9; --label: #fff0f0;
+  }
+  body[data-theme="black"] {
+    --shell: #2e2e33; --shell-dark: #1c1c20; --shoulder: #3a3a42; --shoulder-active: #55555f;
+    --accent: #45454e; --accent-active: #60606b; --meta: #6a6a75; --meta-active: #85858f; --label: #e6e6ea;
+  }
+  body[data-theme="gold"] {
+    --shell: #c9a33a; --shell-dark: #9c7a20; --shoulder: #7e6219; --shoulder-active: #a37f22;
+    --accent: #5c4710; --accent-active: #7e6219; --meta: #e0c46c; --meta-active: #ecd692; --label: #fff8e2;
+  }
+
   * {
     box-sizing: border-box;
     -webkit-tap-highlight-color: transparent;
@@ -293,9 +315,11 @@
   #fast-toggle.on { background: var(--led-on); }
   #fast-toggle.on::after { transform: translateX(18px); }
 
-  /* Botón para volver al menú de juegos */
-  #menu-btn {
-    margin-left: auto;
+  #fast-toggle.on.x4 { background: #ffd23f; }
+
+  /* Botones para abrir los extras y volver al menú de juegos */
+  #extras-btn { margin-left: auto; }
+  #menu-btn, #extras-btn {
     border: none;
     border-radius: 10px;
     padding: 5px 12px;
@@ -305,7 +329,7 @@
     font-weight: 700;
     letter-spacing: 1px;
   }
-  #menu-btn:active { background: var(--shoulder-active); }
+  #menu-btn:active, #extras-btn:active { background: var(--shoulder-active); }
 
   /* Menú de selección de juego (pantalla completa, con scroll propio) */
   #menu {
@@ -454,6 +478,110 @@
   #login input:focus { outline: none; border-color: var(--meta); }
   #login .menu-item { text-align: center; }
   #login-status { min-height: 18px; margin: 6px 0 0; font-size: 13px; color: #ffb4b4; }
+
+  /* Botón pequeño redondeado (acciones de partidas, estados, trucos) */
+  .chip {
+    flex: none;
+    padding: 7px 12px;
+    border: none;
+    border-radius: 10px;
+    background: var(--shoulder);
+    color: var(--label);
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .chip:active { background: var(--shoulder-active); }
+  .chip:disabled { opacity: 0.4; }
+
+  /* Tarjeta Premium del menú */
+  .premium-card {
+    margin: 18px 0 4px;
+    padding: 16px;
+    border-radius: 16px;
+    background: rgba(0, 0, 0, 0.18);
+    color: var(--label);
+  }
+  .premium-card:empty { display: none; }
+  .premium-card h2 { margin: 0 0 8px; font-size: 16px; }
+  .premium-card ul { margin: 0 0 14px; padding-left: 18px; font-size: 13px; line-height: 1.6; opacity: 0.9; }
+  .premium-card .premium-sub { margin: 0 0 8px; font-size: 13px; opacity: 0.8; }
+  .buy-btn { margin: 0; text-align: center; background: #ffd23f; color: #3a2c00; }
+  .buy-btn:active { background: #ffe07a; }
+  .buy-btn:disabled { opacity: 0.6; }
+  .theme-row { display: flex; flex-wrap: wrap; gap: 8px; }
+  .theme-chip {
+    padding: 8px 14px;
+    border: 2px solid transparent;
+    border-radius: 12px;
+    background: var(--shoulder);
+    color: var(--label);
+    font-size: 13px;
+  }
+  .theme-chip.on { border-color: var(--label); }
+
+  /* Mis partidas */
+  #saves-list { display: flex; flex-direction: column; gap: 10px; }
+  .save-row { padding: 12px; border-radius: 14px; background: rgba(0, 0, 0, 0.15); color: var(--label); }
+  .save-head { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 8px; font-size: 14px; }
+  .save-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .save-date { flex: none; font-size: 12px; opacity: 0.7; }
+  .save-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+  .save-history { margin-top: 10px; font-size: 13px; }
+  .save-history.hidden { display: none; }
+  .history-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 4px 0; }
+  .link-btn {
+    margin: 24px auto 0;
+    padding: 8px;
+    border: none;
+    background: none;
+    color: var(--label);
+    font-size: 12px;
+    text-decoration: underline;
+    opacity: 0.6;
+  }
+
+  /* Panel EXTRAS durante la partida */
+  #game-panel {
+    position: fixed;
+    inset: 0;
+    max-width: 520px;
+    margin: 0 auto;
+    z-index: 15;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: calc(20px + env(safe-area-inset-top)) 20px calc(20px + env(safe-area-inset-bottom));
+    background: linear-gradient(180deg, var(--shell), var(--shell-dark));
+    color: var(--label);
+    overflow-y: auto;
+    touch-action: pan-y;
+  }
+  #game-panel.hidden { display: none; }
+  #game-panel h2 { margin: 8px 0 2px; font-size: 16px; }
+  #game-panel .panel-locked { display: none; }
+  #game-panel.locked .panel-locked { display: block; }
+  #game-panel.locked .panel-content { display: none; }
+  .panel-locked p { font-size: 14px; line-height: 1.5; opacity: 0.9; }
+  .panel-content { display: flex; flex-direction: column; gap: 10px; }
+  .state-row { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+  .state-name { font-weight: 600; }
+  .state-date { flex: 1; font-size: 12px; opacity: 0.7; }
+  #cheats-text {
+    width: 100%;
+    padding: 10px 12px;
+    border: 2px solid transparent;
+    border-radius: 12px;
+    background: var(--bezel);
+    color: var(--label);
+    font: 16px ui-monospace, Menlo, Consolas, monospace;
+    -webkit-user-select: text;
+    user-select: text;
+    touch-action: manipulation;
+  }
+  #cheats-text:focus { outline: none; border-color: var(--meta); }
+  #cheats-apply { align-self: flex-start; }
+  #cheats-status { margin: 0; font-size: 13px; opacity: 0.8; }
+  #panel-close { margin-top: auto; text-align: center; }
 </style>
 </head>
 <body>
@@ -463,6 +591,7 @@
     <div id="top-deco">
       <div id="led"></div>
       <span class="brand">POWER</span>
+      <button id="extras-btn">EXTRAS</button>
       <button id="menu-btn">MENU</button>
     </div>
 
@@ -508,8 +637,8 @@
           <span class="meta-label">START</span>
         </div>
         <div class="meta-wrap">
-          <button id="fast-toggle" aria-label="Modo rapido x2"></button>
-          <span class="meta-label">2X</span>
+          <button id="fast-toggle" aria-label="Modo rápido"></button>
+          <span class="meta-label" id="fast-label">2X</span>
         </div>
       </div>
     </div>
@@ -527,7 +656,33 @@
   <div id="menu-local"></div>
   <button id="menu-load" class="menu-item menu-load">+ Cargar juego del dispositivo</button>
   <input type="file" id="menu-file" hidden>
+
+  <section id="premium-box"></section>
+
+  <h2 class="menu-sub">Mis partidas en la nube</h2>
   <p id="menu-saves"></p>
+  <div id="saves-list"></div>
+  <input type="file" id="sav-file" accept=".sav,.srm,.sa1,.dsv" hidden>
+
+  <button id="delete-account" class="link-btn">Borrar mi cuenta</button>
+</div>
+
+<!-- Panel EXTRAS durante la partida (Premium) -->
+<div id="game-panel" class="hidden">
+  <div class="panel-locked">
+    <h2>Extras Premium</h2>
+    <p>Estados rápidos en la nube, trucos, velocidad x4, mandos y temas por un pago único de 4,99 €.</p>
+    <button id="panel-premium" class="menu-item buy-btn">Ver Premium</button>
+  </div>
+  <div class="panel-content">
+    <h2>Estados rápidos</h2>
+    <div id="states-list"></div>
+    <h2>Trucos</h2>
+    <textarea id="cheats-text" rows="5" spellcheck="false" autocapitalize="characters" placeholder="Un código por línea (GameShark, Action Replay, CodeBreaker, Game Genie)"></textarea>
+    <button id="cheats-apply" class="chip">Aplicar trucos</button>
+    <p id="cheats-status"></p>
+  </div>
+  <button id="panel-close" class="menu-item">Volver al juego</button>
 </div>
 
 <!-- Inicio de sesión: las partidas se guardan en la cuenta del usuario -->
