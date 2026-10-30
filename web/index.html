@@ -333,6 +333,7 @@
 
   /* Menú de selección de juego (pantalla completa, con scroll propio) */
   #menu {
+    --ad-h: 60px;
     position: fixed;
     inset: 0;
     max-width: 520px;
@@ -346,6 +347,34 @@
     touch-action: pan-y;
   }
   #menu.hidden { display: none; }
+  #menu.has-ad { padding-bottom: calc(24px + var(--ad-h) + env(safe-area-inset-bottom)); }
+  #ad-band {
+    --ad-h: 60px;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    max-width: 520px;
+    margin: 0 auto;
+    z-index: 11;
+    height: var(--ad-h);
+    padding-bottom: env(safe-area-inset-bottom);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.35);
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+  }
+  #ad-band.hidden { display: none; }
+  #ad-band .house-ad {
+    border: 0;
+    background: none;
+    color: var(--label);
+    font-size: 13px;
+    padding: 8px 12px;
+  }
+  #ad-band .house-ad b { color: #ffd23f; }
   #menu h1 {
     margin: 0 0 6px;
     font-size: 20px;
@@ -667,6 +696,9 @@
   <input type="file" id="sav-file" accept=".sav,.srm,.sa1,.dsv" hidden>
 
   <button id="delete-account" class="link-btn">Borrar mi cuenta</button>
+
+  <!-- Banda de anuncios (solo cuentas gratis, solo en el menú) -->
+  <div id="ad-band" class="hidden"></div>
 </div>
 
 <!-- Panel EXTRAS durante la partida (Premium) -->

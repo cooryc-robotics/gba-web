@@ -93,7 +93,43 @@
       ? (user.premium ? '★ ' : '') + 'Sesión: ' + user.username : '';
     applyTheme(user && user.premium ? user.theme : null);
     renderPremium();
+    renderAd();
     if (user) renderSaves();
+  }
+
+  /* ---- Anuncios: banda inferior del menú para cuentas gratis ----
+   * Con AdSense configurado en el servidor se muestra su anuncio; si no,
+   * un aviso propio para pasarse a Premium. Nunca durante la partida. */
+
+  const adBand = document.getElementById('ad-band');
+  let adsConfig = null;   // { client, slot } que manda auth.php
+  let adLoaded = false;
+
+  function renderAd() {
+    const show = !!currentUser && !currentUser.premium;
+    adBand.classList.toggle('hidden', !show);
+    menu.classList.toggle('has-ad', show);
+    if (!show || adLoaded) return;
+    adBand.innerHTML = '';
+    if (adsConfig && adsConfig.client && adsConfig.slot) {
+      adLoaded = true;
+      const s = document.createElement('script');
+      s.async = true;
+      s.crossOrigin = 'anonymous';
+      s.src = 'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=' + encodeURIComponent(adsConfig.client);
+      document.head.appendChild(s);
+      const ins = el('ins', 'adsbygoogle');
+      ins.style.cssText = 'display:inline-block;width:320px;height:50px';
+      ins.dataset.adClient = adsConfig.client;
+      ins.dataset.adSlot = adsConfig.slot;
+      adBand.appendChild(ins);
+      (window.adsbygoogle = window.adsbygoogle || []).push({});
+      return;
+    }
+    const b = el('button', 'house-ad');
+    b.innerHTML = 'Quita los anuncios y desbloquea los extras · <b>Premium 4,99 €</b>';
+    b.addEventListener('click', () => premiumBox.scrollIntoView({ behavior: 'smooth' }));
+    adBand.appendChild(b);
   }
 
   /* ---- Premium: pago único con Mollie (enlaces de pago de Qonto) ---- */
@@ -117,6 +153,7 @@
       premiumBox.appendChild(el('h2', null, 'Premium · 4,99 € (pago único)'));
       const ul = el('ul');
       [
+        'Sin anuncios',
         'Partidas en la nube de todos tus juegos (gratis: 3)',
         'Estados rápidos: guarda y carga en cualquier momento, en la nube',
         'Historial de las últimas 10 partidas de cada juego',
@@ -251,6 +288,7 @@
   api('auth.php')
     .then((r) => r.json())
     .then((data) => {
+      adsConfig = data.ads || null;
       setUser(data.user || null);
       if (data.user) handlePaymentReturn();
     })

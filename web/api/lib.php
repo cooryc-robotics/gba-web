@@ -184,6 +184,17 @@ function public_user(array $row): array {
     ];
 }
 
+/* Anuncios de AdSense para cuentas gratis. En config.php:
+ *   'ads' => ['client' => 'ca-pub-1234567890123456', 'slot' => '1234567890'] */
+function ads_config(): ?array {
+    $a = config()['ads'] ?? null;
+    if (!is_array($a)) return null;
+    $client = (string)($a['client'] ?? '');
+    $slot = (string)($a['slot'] ?? '');
+    if (!preg_match('/^ca-pub-\d{10,20}$/', $client) || !preg_match('/^\d{5,20}$/', $slot)) return null;
+    return ['client' => $client, 'slot' => $slot];
+}
+
 function require_user(): array {
     $user = current_user();
     if (!$user) fail(401, 'Inicia sesión');
