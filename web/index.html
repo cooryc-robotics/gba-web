@@ -330,6 +330,23 @@
     letter-spacing: 1px;
   }
   #menu-btn:active, #extras-btn:active { background: var(--shoulder-active); }
+  #extras-btn { margin-left: 0; }
+  #mute-btn {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    border-radius: 10px;
+    padding: 4px 10px;
+    background: var(--shoulder);
+    color: var(--label);
+  }
+  #mute-btn:active { background: var(--shoulder-active); }
+  #mute-btn .snd-off { display: none; }
+  #mute-btn.muted .snd-on { display: none; }
+  #mute-btn.muted .snd-off { display: inline; }
+  #mute-btn.muted { background: rgba(150, 40, 55, 0.7); }
   #top-deco .kbd-help { display: none; }
 
   /* ---- Ordenador (ratón y teclado): pantalla completa, sin botones táctiles ---- */
@@ -361,7 +378,6 @@
     text-overflow: ellipsis;
   }
   body.desktop #top-deco .brand { display: none; }
-  body.desktop #extras-btn { margin-left: 0; }
   body.desktop #screen-wrap { flex: 1; margin: 0; align-items: center; }
   body.desktop #gb-canvas {
     height: min(100vh, calc(100vw * var(--ar-h, 160) / var(--ar-w, 240)));
@@ -700,7 +716,8 @@
     <div id="top-deco">
       <div id="led"></div>
       <span class="brand">POWER</span>
-      <span class="kbd-help">Flechas · Z = A · X = B · A / S = L / R · Intro = Start · Retroceso = Select · Espacio = velocidad · F = pantalla completa · M = menú · E = extras</span>
+      <span class="kbd-help">Flechas · Z = A · X = B · A / S = L / R · Intro = Start · Retroceso = Select · Espacio = velocidad · F = pantalla completa · M = silenciar · Tab = menú · E = extras</span>
+      <button id="mute-btn" aria-label="Silenciar" title="Silenciar (M)"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="currentColor" d="M3 9v6h4l5 4V5L7 9H3z"/><path class="snd-on" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12"/><path class="snd-off" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M16 9l6 6M22 9l-6 6"/></svg></button>
       <button id="extras-btn">EXTRAS</button>
       <button id="menu-btn">MENU</button>
     </div>

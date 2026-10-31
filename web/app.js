@@ -996,6 +996,30 @@
   let audioCtx = null;
   let gbAudioNode = null;
 
+  /* ---- Silenciar (botón del altavoz y tecla M) ----
+   * Se recuerda en este dispositivo. */
+  const MUTE_KEY = 'gbamuted';
+  const muteBtn = document.getElementById('mute-btn');
+  let gainNode = null;
+  let muted = false;
+  try { muted = localStorage.getItem(MUTE_KEY) === '1'; } catch (e) { /* sin localStorage */ }
+
+  function setMuted(on) {
+    muted = on;
+    if (gainNode) gainNode.gain.value = on ? 0 : 1;
+    muteBtn.classList.toggle('muted', on);
+    muteBtn.setAttribute('aria-label', on ? 'Activar sonido' : 'Silenciar');
+    muteBtn.title = (on ? 'Activar sonido' : 'Silenciar') + ' (M)';
+    try { localStorage.setItem(MUTE_KEY, on ? '1' : '0'); } catch (e) { /* nada */ }
+  }
+  setMuted(muted);
+
+  muteBtn.addEventListener('click', () => {
+    initAudio(); // el clic también sirve de gesto para arrancar el audio
+    setMuted(!muted);
+    if (isDesktop()) showToast(muted ? 'Sonido desactivado' : 'Sonido activado');
+  });
+
   function initAudio() {
     if (audioCtx) {
       if (audioCtx.state === 'suspended') audioCtx.resume();
@@ -1008,7 +1032,11 @@
         gbAudioNode = new AudioWorkletNode(audioCtx, 'gb-audio-processor', {
           outputChannelCount: [2],
         });
-        gbAudioNode.connect(audioCtx.destination);
+        // El volumen pasa por un nodo aparte para poder silenciar sin parar el juego.
+        gainNode = audioCtx.createGain();
+        gainNode.gain.value = muted ? 0 : 1;
+        gbAudioNode.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
       });
     } catch (err) {
       // Sin audio, pero el juego sigue siendo jugable igualmente.
@@ -1223,6 +1251,12 @@
       toggleFullscreen();
       return;
     }
+    // M: silenciar, en cualquier pantalla (salvo escribiendo).
+    if (ev.code === 'KeyM' && !ev.repeat && !typing) {
+      ev.preventDefault();
+      muteBtn.click();
+      return;
+    }
     if (!keyboardPlaying(ev)) return;
     if (!audioUnlocked) { audioUnlocked = true; initAudio(); }
     const btn = KEY_MAP[ev.code];
@@ -1236,7 +1270,7 @@
     }
     if (ev.repeat) return;
     if (ev.code === 'Space') { ev.preventDefault(); nextSpeed(); }
-    else if (ev.code === 'Escape' || ev.code === 'KeyM') { ev.preventDefault(); goToMenu(); }
+    else if (ev.code === 'Escape' || ev.code === 'Tab') { ev.preventDefault(); goToMenu(); }
     else if (ev.code === 'KeyE') { ev.preventDefault(); extrasBtn.click(); }
   });
 
