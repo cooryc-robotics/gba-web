@@ -20,7 +20,7 @@ function list_roms(int $userId): array {
 
 function rom_name(): string {
     $name = trim((string)($_GET['name'] ?? ''));
-    if ($name === '' || mb_strlen($name) > 200 || preg_match('#[/\\\x00-\x1f]#', $name)
+    if ($name === '' || mb_strlen($name) > 200 || strpbrk($name, '/\\') !== false || preg_match('/[\x00-\x1f]/', $name)
         || !preg_match('/\.(gba|gb|gbc)$/i', $name)) fail(400, 'Nombre de juego no válido');
     return $name;
 }
