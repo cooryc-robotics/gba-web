@@ -57,8 +57,12 @@ if ($action === 'delete') {
         note_fail();
         fail(401, 'Contraseña incorrecta');
     }
-    // Las partidas, estados, trucos, sesiones y pedidos se borran en cascada.
+    // Las partidas, estados, trucos, juegos, sesiones y pedidos se borran en cascada.
+    $st = db()->prepare('SELECT sha256 FROM roms WHERE user_id = ?');
+    $st->execute([$user['id']]);
+    $shas = $st->fetchAll(PDO::FETCH_COLUMN);
     db()->prepare('DELETE FROM users WHERE id = ?')->execute([$user['id']]);
+    rom_gc($shas);
     end_session();
     json_out(200, ['user' => null]);
 }

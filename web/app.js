@@ -60,7 +60,6 @@
     .then(([mod, list]) => {
       Module = mod;
       buildMenu(list);
-      refreshLocal();
     })
     .catch((err) => setMenuStatus('No se pudo iniciar el emulador: ' + err, true));
 
@@ -94,7 +93,8 @@
     applyTheme(user && user.premium ? user.theme : null);
     renderPremium();
     renderAd();
-    if (user) renderSaves();
+    refreshLocal();
+    if (user) { renderSaves(); migrateDeviceRoms(); }
   }
 
   /* ---- Anuncios: banda inferior del menú para cuentas gratis ----
@@ -337,91 +337,42 @@
     }, entry.file);
   }
 
-  /* ---- Juegos cargados desde el dispositivo (se guardan en IndexedDB) ---- */
+  /* ---- Juegos del usuario: se guardan en su cuenta, en el servidor ---- */
+  // La clave de cada juego sigue siendo 'local:' + nombre para que sus
+  // partidas guardadas no cambien respecto a cuando se guardaban en el
+  // dispositivo.
 
-  const DB_NAME = 'gba-web';
-  let dbPromise = null;
-
-  function openDB() {
-    if (!dbPromise) {
-      dbPromise = new Promise((resolve, reject) => {
-        if (!window.indexedDB) return reject(new Error('IndexedDB no disponible'));
-        const req = window.indexedDB.open(DB_NAME, 1);
-        req.onupgradeneeded = () => {
-          req.result.createObjectStore('roms');                      // nombre -> bytes
-          req.result.createObjectStore('meta', { keyPath: 'name' }); // nombre, tamaño
-        };
-        req.onsuccess = () => resolve(req.result);
-        req.onerror = () => reject(req.error);
-      });
-    }
-    return dbPromise;
-  }
-
-  async function localList() {
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-      const r = db.transaction('meta').objectStore('meta').getAll();
-      r.onsuccess = () => resolve(r.result.sort((a, b) => a.name.localeCompare(b.name)));
-      r.onerror = () => reject(r.error);
-    });
-  }
-
-  async function localGet(name) {
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-      const r = db.transaction('roms').objectStore('roms').get(name);
-      r.onsuccess = () => resolve(r.result);
-      r.onerror = () => reject(r.error);
-    });
-  }
-
-  async function localPut(name, arrayBuffer) {
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(['roms', 'meta'], 'readwrite');
-      tx.objectStore('roms').put(arrayBuffer, name);
-      tx.objectStore('meta').put({ name, size: arrayBuffer.byteLength });
-      tx.oncomplete = () => resolve();
-      tx.onerror = tx.onabort = () => reject(tx.error);
-    });
-  }
-
-  async function localDelete(name) {
-    const db = await openDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction(['roms', 'meta'], 'readwrite');
-      tx.objectStore('roms').delete(name);
-      tx.objectStore('meta').delete(name);
-      tx.oncomplete = () => resolve();
-      tx.onerror = tx.onabort = () => reject(tx.error);
-    });
-  }
+  let myRoms = [];
 
   function titleFromName(name) {
     return name.replace(/\.[^.]+$/, '').replace(/_/g, ' ').trim() || name;
   }
 
   async function refreshLocal() {
-    let items = [];
-    try { items = await localList(); } catch (e) { /* sin IndexedDB: no hay lista local */ }
+    myRoms = [];
+    if (currentUser) {
+      try {
+        const r = await api('roms.php');
+        if (r.ok) myRoms = (await r.json()).roms || [];
+      } catch (e) { /* sin conexión: lista vacía */ }
+    }
 
     menuLocal.innerHTML = '';
-    menuLocalTitle.classList.toggle('hidden', items.length === 0);
-    items.forEach(({ name }) => {
+    menuLocalTitle.classList.toggle('hidden', myRoms.length === 0);
+    myRoms.forEach((rom) => {
       const row = document.createElement('div');
       row.className = 'menu-row';
 
       const play = document.createElement('button');
       play.className = 'menu-item';
-      play.textContent = titleFromName(name);
-      play.addEventListener('click', () => startLocal(name));
+      play.textContent = titleFromName(rom.name);
+      play.addEventListener('click', () => startLocal(rom));
 
       const del = document.createElement('button');
       del.className = 'menu-del';
       del.textContent = '✕';
-      del.setAttribute('aria-label', 'Borrar ' + titleFromName(name));
-      del.addEventListener('click', () => deleteLocal(name));
+      del.setAttribute('aria-label', 'Borrar ' + titleFromName(rom.name));
+      del.addEventListener('click', () => deleteLocal(rom.name));
 
       row.appendChild(play);
       row.appendChild(del);
@@ -429,18 +380,41 @@
     });
   }
 
-  function startLocal(name) {
-    return launch(titleFromName(name), async () => {
-      const ab = await localGet(name);
-      if (!ab) throw new Error('no se encuentra en este dispositivo');
-      return new Uint8Array(ab);
-    }, 'local:' + name);
+  function startLocal(rom) {
+    return launch(titleFromName(rom.name), async () => {
+      // El navegador lo guarda en caché: la segunda vez no se vuelve a descargar.
+      const r = await api('roms.php?sha=' + rom.sha, { cache: 'default' });
+      if (!r.ok) throw new Error('no se pudo descargar (HTTP ' + r.status + ')');
+      return new Uint8Array(await r.arrayBuffer());
+    }, 'local:' + rom.name);
   }
 
   async function deleteLocal(name) {
-    if (!window.confirm('¿Borrar "' + titleFromName(name) + '" de este dispositivo?\n(La partida guardada se conserva.)')) return;
-    try { await localDelete(name); } catch (e) { setMenuStatus('No se pudo borrar: ' + e, true); }
+    if (!window.confirm('¿Borrar "' + titleFromName(name) + '" de tu cuenta?\n(La partida guardada se conserva.)')) return;
+    try {
+      const r = await api('roms.php?action=delete&name=' + encodeURIComponent(name), { method: 'POST' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+    } catch (e) { setMenuStatus('No se pudo borrar: ' + (e.message || e), true); }
     refreshLocal();
+  }
+
+  // Sube un ROM a la cuenta. onProgress recibe de 0 a 1.
+  function uploadRom(name, ab, onProgress) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', 'api/roms.php?name=' + encodeURIComponent(name));
+      xhr.setRequestHeader('X-GBA', '1');
+      xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+      if (onProgress) xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
+      xhr.onload = () => {
+        let data = {};
+        try { data = JSON.parse(xhr.responseText); } catch (e) { /* respuesta vacía */ }
+        if (xhr.status >= 200 && xhr.status < 300) resolve(data.rom);
+        else reject(new Error(data.error || 'HTTP ' + xhr.status));
+      };
+      xhr.onerror = () => reject(new Error('sin conexión'));
+      xhr.send(ab);
+    });
   }
 
   menuLoad.addEventListener('click', () => {
@@ -470,14 +444,71 @@
       return;
     }
 
-    // Lo guardamos para que aparezca en el menú la próxima vez.
+    // Se guarda en la cuenta antes de jugar, para tenerlo en cualquier dispositivo.
+    menuLoad.disabled = true;
     try {
-      await localPut(file.name, ab);
-      await refreshLocal();
-    } catch (e) { /* sin IndexedDB se juega igualmente, pero no queda guardado */ }
+      await uploadRom(file.name, ab, (f) => setMenuStatus('Subiendo ' + titleFromName(file.name) + '… ' + Math.round(f * 100) + ' %'));
+      setMenuStatus('');
+      refreshLocal();
+    } catch (err) {
+      showToast('No se pudo guardar el juego en tu cuenta (' + (err.message || err) + ')', true);
+    }
+    menuLoad.disabled = false;
 
     launch(titleFromName(file.name), async () => new Uint8Array(ab), 'local:' + file.name);
   });
+
+  /* Antes los juegos se guardaban en el dispositivo (IndexedDB 'gba-web'):
+   * al entrar se suben a la cuenta y se borran del dispositivo. */
+  let migratingLocal = false;
+
+  async function migrateDeviceRoms() {
+    if (migratingLocal || !currentUser || !window.indexedDB) return;
+    migratingLocal = true;
+    try {
+      if (indexedDB.databases) {
+        const dbs = await indexedDB.databases();
+        if (!dbs.some((d) => d.name === 'gba-web')) return;
+      }
+      const db = await new Promise((resolve, reject) => {
+        const req = indexedDB.open('gba-web', 1);
+        req.onupgradeneeded = () => {
+          req.result.createObjectStore('roms');
+          req.result.createObjectStore('meta', { keyPath: 'name' });
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+      const idb = (stores, mode, fn) => new Promise((resolve, reject) => {
+        const tx = db.transaction(stores, mode);
+        const r = fn(tx);
+        tx.oncomplete = () => resolve(r && r.result);
+        tx.onerror = tx.onabort = () => reject(tx.error);
+      });
+      const items = (await idb('meta', 'readonly', (tx) => tx.objectStore('meta').getAll())) || [];
+      let left = 0;
+      for (const { name } of items) {
+        try {
+          const ab = await idb('roms', 'readonly', (tx) => tx.objectStore('roms').get(name));
+          if (ab) {
+            setMenuStatus('Pasando ' + titleFromName(name) + ' a tu cuenta…');
+            await uploadRom(name, ab);
+          }
+          await idb(['roms', 'meta'], 'readwrite', (tx) => {
+            tx.objectStore('roms').delete(name);
+            tx.objectStore('meta').delete(name);
+          });
+        } catch (e) { left++; }
+      }
+      db.close();
+      if (!left) indexedDB.deleteDatabase('gba-web');
+      if (items.length) {
+        setMenuStatus(left ? 'No se pudieron pasar ' + left + ' juego(s) a tu cuenta; se reintentará.' : '', !!left);
+        refreshLocal();
+      }
+    } catch (e) { /* se reintenta la próxima vez */ }
+    finally { migratingLocal = false; }
+  }
 
   // .gb / .gbc usan el núcleo de Game Boy; el resto (.gba), el de GBA.
   function isGbFile(name) {
