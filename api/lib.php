@@ -18,6 +18,11 @@ const HISTORY_MIN_GAP = 120;   // segundos mínimos entre dos versiones del hist
 const STATE_SLOTS = 3;         // huecos de estado rápido por juego (premium)
 const MAX_STATE_BYTES = 1048576;
 const THEMES = ['indigo', 'atomic', 'kiwi', 'coral', 'black', 'gold'];
+const MAX_ROM_BYTES = 33554432; // 32 MiB, el ROM de GBA más grande
+const MAX_ROMS_PER_USER = 50;
+// Los ROMs se guardan fuera de la web, uno por contenido (sha256): si varios
+// usuarios suben el mismo juego, se guarda una sola vez.
+const ROMS_DIR = __DIR__ . '/../../../gba-private/roms';
 
 header('X-Content-Type-Options: nosniff');
 header('Cache-Control: no-store');
@@ -104,6 +109,18 @@ function migrate(PDO $pdo): void {
         3 => [ // id del pago en Mollie (Qonto)
             'ALTER TABLE orders ADD provider_ref VARCHAR(64) NULL, ADD UNIQUE INDEX (provider_ref)',
         ],
+        4 => [ // juegos de cada usuario (los bytes van en ROMS_DIR)
+            'CREATE TABLE roms (
+                user_id INT UNSIGNED NOT NULL,
+                name VARCHAR(200) NOT NULL,
+                sha256 CHAR(64) NOT NULL,
+                size INT UNSIGNED NOT NULL,
+                created_at DATETIME NOT NULL,
+                PRIMARY KEY (user_id, name),
+                INDEX (sha256),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4',
+        ],
     ];
 
     $pdo->exec('CREATE TABLE IF NOT EXISTS schema_version (v INT NOT NULL) ENGINE=InnoDB');
@@ -135,6 +152,19 @@ function require_post(): void {
 function read_json(): array {
     $data = json_decode(file_get_contents('php://input') ?: '', true);
     return is_array($data) ? $data : [];
+}
+
+function rom_path(string $sha): string {
+    return ROMS_DIR . '/' . substr($sha, 0, 2) . '/' . $sha;
+}
+
+// Borra del disco los ROMs que ya no tiene ningún usuario.
+function rom_gc(array $shas): void {
+    $st = db()->prepare('SELECT 1 FROM roms WHERE sha256 = ? LIMIT 1');
+    foreach (array_unique($shas) as $sha) {
+        $st->execute([$sha]);
+        if (!$st->fetchColumn() && is_file(rom_path($sha))) @unlink(rom_path($sha));
+    }
 }
 
 function client_ip(): string {
