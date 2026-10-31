@@ -4,6 +4,7 @@
  *   GET  saves.php                    → { saves: [{ key, size, updated_at }], limit }
  *   GET  saves.php?key=K              → bytes de la partida (404 si no hay)
  *   POST saves.php?key=K              cuerpo: bytes de la partida
+ *   POST saves.php?key=K&action=delete borra la partida y su historial
  *   GET  saves.php?key=K&history=1    → { versions: [{ id, size, saved_at }] }   (premium)
  *   GET  saves.php?key=K&version=ID   → bytes de esa versión                     (premium)
  *
@@ -51,6 +52,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
 require_post();
 $key = game_key();
+
+if (($_GET['action'] ?? '') === 'delete') {
+    db()->prepare('DELETE FROM saves WHERE user_id = ? AND save_key = ?')->execute([$user['id'], $key]);
+    db()->prepare('DELETE FROM save_history WHERE user_id = ? AND save_key = ?')->execute([$user['id'], $key]);
+    json_out(200, ['ok' => true]);
+}
 
 $data = file_get_contents('php://input');
 if ($data === false || strlen($data) > MAX_SAVE_BYTES) fail(413, 'Partida demasiado grande');

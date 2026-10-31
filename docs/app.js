@@ -781,10 +781,28 @@
     const hist = el('button', 'chip', 'Historial');
     const histBox = el('div', 'save-history hidden');
     hist.addEventListener('click', () => premiumOnly() && toggleHistory(s.key, histBox));
-    [exp, imp, hist].forEach((b) => actions.appendChild(b));
+    const del = el('button', 'chip chip-danger', 'Borrar');
+    del.addEventListener('click', () => deleteSave(s.key, del));
+    [exp, imp, hist, del].forEach((b) => actions.appendChild(b));
     row.appendChild(actions);
     row.appendChild(histBox);
     return row;
+  }
+
+  // Borra la partida del servidor (con su historial) y la copia de este
+  // dispositivo; si no, la copia local se volvería a subir al abrir el juego.
+  async function deleteSave(key, btn) {
+    if (!window.confirm('¿Borrar la partida guardada de "' + gameName(key) + '"?\n\nSe pierde el progreso y su historial. No se puede deshacer.')) return;
+    btn.disabled = true;
+    try {
+      const r = await api('saves.php?action=delete&key=' + encodeURIComponent(key), { method: 'POST' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      forgetLocalSave(key);
+      showToast('Partida borrada');
+    } catch (e) {
+      showToast('No se pudo borrar (' + (e.message || e) + ')', true);
+    }
+    renderSaves();
   }
 
   // Tamaños estándar de partida (EEPROM, SRAM, Flash): el .sav exportado se
