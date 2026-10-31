@@ -315,11 +315,13 @@
     if (starting || !Module) return;
     starting = true;
     initAudio(); // pulsar un juego es el gesto que exigen los navegadores para el audio
+    if (isDesktop()) enterFullscreen(); // también necesita el gesto: antes de cualquier await
     setMenuStatus('Cargando ' + title + '…');
     try {
       const buf = await getBuf();
       if (await loadRom(buf, key)) {
         menu.classList.add('hidden');
+        document.body.classList.add('playing');
         setMenuStatus('');
       }
     } catch (err) {
@@ -576,6 +578,8 @@
 
     setMenuStatus('');
     renderSaves();
+    releaseKeys();
+    document.body.classList.remove('playing');
     menu.classList.remove('hidden');
   }
 
@@ -1119,6 +1123,12 @@
     fastToggle.classList.toggle('on', fastMode);
     fastToggle.classList.toggle('x4', n === 4);
     if (fastLabel) fastLabel.textContent = n === 4 ? '4X' : '2X';
+    if (isDesktop()) showToast('Velocidad x' + n);
+  }
+
+  function nextSpeed() {
+    const premium = currentUser && currentUser.premium;
+    setSpeed(speed === 1 ? 2 : speed === 2 && premium ? 4 : 1);
   }
   if (fastToggle) {
     fastToggle.addEventListener('pointerdown', (ev) => {
@@ -1127,10 +1137,87 @@
         audioUnlocked = true;
         initAudio();
       }
-      const premium = currentUser && currentUser.premium;
-      setSpeed(speed === 1 ? 2 : speed === 2 && premium ? 4 : 1);
+      nextSpeed();
     });
   }
+
+  /* ---- Ordenador: pantalla completa y teclado ----
+   * Con ratón o trackpad (no en móviles ni tabletas táctiles) la consola
+   * desaparece: solo queda la pantalla del juego, a todo el tamaño, y se
+   * juega con el teclado. La barra de arriba aparece al mover el ratón. */
+
+  const desktopQuery = window.matchMedia('(hover: hover) and (pointer: fine)');
+  function isDesktop() { return desktopQuery.matches; }
+  function applyDesktop() { document.body.classList.toggle('desktop', isDesktop()); }
+  applyDesktop();
+  if (desktopQuery.addEventListener) desktopQuery.addEventListener('change', applyDesktop);
+
+  function enterFullscreen() {
+    const el = document.documentElement;
+    if (document.fullscreenElement || !el.requestFullscreen) return;
+    el.requestFullscreen().catch(() => { /* el navegador no lo permite: se sigue en la ventana */ });
+  }
+
+  function toggleFullscreen() {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else enterFullscreen();
+  }
+
+  let barTimer = 0;
+  document.addEventListener('mousemove', () => {
+    if (!isDesktop()) return;
+    document.body.classList.add('show-bar');
+    clearTimeout(barTimer);
+    barTimer = setTimeout(() => document.body.classList.remove('show-bar'), 2500);
+  });
+
+  // Teclas como en mGBA, por posición física (sirve igual en teclado español).
+  const KEY_MAP = {
+    KeyX: 0, KeyZ: 1, Backspace: 2, ShiftRight: 2, Enter: 3, NumpadEnter: 3,
+    ArrowRight: 4, ArrowLeft: 5, ArrowUp: 6, ArrowDown: 7, KeyS: 8, KeyA: 9,
+  }; // código de tecla → botón de Game Boy
+  const keysDown = new Set();
+
+  function releaseKeys() {
+    keysDown.forEach((code) => { if (Module) Module._em_set_button(KEY_MAP[code], 0); });
+    keysDown.clear();
+  }
+
+  // Solo durante la partida, y nunca mientras se escribe en un campo.
+  function keyboardPlaying(ev) {
+    if (!saveKey || !menu.classList.contains('hidden') || !gamePanel.classList.contains('hidden')) return false;
+    const t = ev.target;
+    return !(t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable));
+  }
+
+  document.addEventListener('keydown', (ev) => {
+    if (ev.ctrlKey || ev.metaKey || ev.altKey || !keyboardPlaying(ev)) return;
+    if (!audioUnlocked) { audioUnlocked = true; initAudio(); }
+    const btn = KEY_MAP[ev.code];
+    if (btn !== undefined) {
+      ev.preventDefault();
+      if (!ev.repeat && !keysDown.has(ev.code)) {
+        keysDown.add(ev.code);
+        Module._em_set_button(btn, 1);
+      }
+      return;
+    }
+    if (ev.repeat) return;
+    if (ev.code === 'Space') { ev.preventDefault(); nextSpeed(); }
+    else if (ev.code === 'KeyF') { ev.preventDefault(); toggleFullscreen(); }
+    else if (ev.code === 'Escape' || ev.code === 'KeyM') { ev.preventDefault(); goToMenu(); }
+    else if (ev.code === 'KeyE') { ev.preventDefault(); extrasBtn.click(); }
+  });
+
+  document.addEventListener('keyup', (ev) => {
+    if (!keysDown.has(ev.code)) return;
+    keysDown.delete(ev.code);
+    ev.preventDefault();
+    if (Module) Module._em_set_button(KEY_MAP[ev.code], 0);
+  });
+
+  // Al cambiar de ventana no llegan los keyup: se sueltan todas.
+  window.addEventListener('blur', releaseKeys);
 
   /* ---- Panel EXTRAS (Premium): estados rápidos y trucos ---- */
 
