@@ -1193,9 +1193,9 @@
     barTimer = setTimeout(() => document.body.classList.remove('show-bar'), 2500);
   });
 
-  // Teclas como en mGBA, por posición física (sirve igual en teclado español).
+  // Teclas por posición física (sirve igual en teclado español): Z = A, X = B.
   const KEY_MAP = {
-    KeyX: 0, KeyZ: 1, Backspace: 2, ShiftRight: 2, Enter: 3, NumpadEnter: 3,
+    KeyZ: 0, KeyX: 1, Backspace: 2, ShiftRight: 2, Enter: 3, NumpadEnter: 3,
     ArrowRight: 4, ArrowLeft: 5, ArrowUp: 6, ArrowDown: 7, KeyS: 8, KeyA: 9,
   }; // código de tecla → botón de Game Boy
   const keysDown = new Set();
