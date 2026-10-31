@@ -31,6 +31,7 @@
   let cloudKey = null;      // clave del save actual en el servidor
   let lastSavedB64 = null;  // para no reescribir localStorage si no ha cambiado nada
   let currentUser = null;   // { id, username } con la sesión iniciada
+  let offlineSession = false; // se entró sin red con la sesión guardada (Premium)
 
   function setMenuStatus(msg, isError) {
     menuStatus.textContent = msg || '';
@@ -89,7 +90,7 @@
     loginEl.classList.toggle('hidden', !!user);
     menuUser.classList.toggle('hidden', !user);
     document.getElementById('menu-username').textContent = user
-      ? (user.premium ? '★ ' : '') + 'Sesión: ' + user.username : '';
+      ? (user.premium ? '★ ' : '') + 'Sesión: ' + user.username + (offlineSession ? ' · sin conexión' : '') : '';
     applyTheme(user && user.premium ? user.theme : null);
     renderPremium();
     renderAd();
@@ -161,6 +162,7 @@
         'Velocidad x4 (además de x2)',
         'Trucos (GameShark, Action Replay, CodeBreaker, Game Genie)',
         'Mandos Bluetooth / USB',
+        'Jugar sin conexión: tus juegos y partidas también en el dispositivo',
         'Temas de colores para la consola',
       ].forEach((t) => ul.appendChild(el('li', null, t)));
       premiumBox.appendChild(ul);
@@ -180,6 +182,15 @@
       row.appendChild(b);
     });
     premiumBox.appendChild(row);
+
+    if (!canOffline()) return;
+    premiumBox.appendChild(el('p', 'premium-sub offline-title', 'Jugar sin conexión'));
+    const on = offlineEnabled();
+    const toggle = el('button', 'chip' + (on ? ' chip-danger' : ''), on ? 'Desactivar en este dispositivo' : 'Activar en este dispositivo');
+    toggle.addEventListener('click', () => (offlineEnabled() ? disableOffline(true) : enableOffline()));
+    premiumBox.appendChild(toggle);
+    premiumBox.appendChild(el('p', 'offline-status', ''));
+    renderOfflineStatus();
   }
 
   async function chooseTheme(id) {
@@ -240,6 +251,7 @@
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data.error || 'HTTP ' + r.status);
+      disableOffline(false);
       setLoginMode(false);
       setUser(null);
       showToast('Cuenta borrada');
@@ -273,6 +285,7 @@
       if (!r.ok) throw new Error(data.error || 'Error ' + r.status);
       loginPass.value = '';
       setUser(data.user);
+      flushPendingSaves();
     } catch (err) {
       loginStatus.textContent = err.message || String(err);
     }
@@ -281,6 +294,8 @@
 
   document.getElementById('logout-btn').addEventListener('click', async () => {
     try { await api('auth.php?action=logout', { method: 'POST' }); } catch (e) { /* se cierra igualmente aquí */ }
+    disableOffline(false); // en un dispositivo compartido no deben quedar sus juegos
+    offlineSession = false;
     setLoginMode(false);
     setUser(null);
   });
@@ -290,9 +305,17 @@
     .then((data) => {
       adsConfig = data.ads || null;
       setUser(data.user || null);
-      if (data.user) handlePaymentReturn();
+      if (data.user) { handlePaymentReturn(); flushPendingSaves(); }
     })
     .catch(() => {
+      // Sin red: un Premium con el modo sin conexión entra con su última sesión.
+      const saved = offlineUser();
+      if (saved) {
+        offlineSession = true;
+        setUser(saved.user);
+        showToast('Sin conexión: tus partidas se guardan en este dispositivo');
+        return;
+      }
       setUser(null);
       loginStatus.textContent = 'No se puede conectar con el servidor';
     });
@@ -352,12 +375,16 @@
 
   async function refreshLocal() {
     myRoms = [];
-    if (currentUser) {
+    let fetched = false;
+    if (currentUser && !offlineSession) {
       try {
         const r = await api('roms.php');
-        if (r.ok) myRoms = (await r.json()).roms || [];
-      } catch (e) { /* sin conexión: lista vacía */ }
+        if (r.ok) { myRoms = (await r.json()).roms || []; fetched = true; }
+      } catch (e) { /* sin conexión */ }
     }
+    // Sin conexión: la lista de la última vez, si el modo sin conexión está activo.
+    const saved = currentUser && !fetched && offlineUser();
+    if (saved && saved.user.id === currentUser.id) myRoms = saved.roms || [];
 
     menuLocal.innerHTML = '';
     menuLocalTitle.classList.toggle('hidden', myRoms.length === 0);
@@ -380,14 +407,26 @@
       row.appendChild(del);
       menuLocal.appendChild(row);
     });
+    if (fetched) syncOffline();
   }
 
   function startLocal(rom) {
     return launch(titleFromName(rom.name), async () => {
-      // El navegador lo guarda en caché: la segunda vez no se vuelve a descargar.
-      const r = await api('roms.php?sha=' + rom.sha, { cache: 'default' });
+      // Con el modo sin conexión, primero la copia del dispositivo.
+      const cache = offlineEnabled() ? await caches.open(ROM_CACHE).catch(() => null) : null;
+      const hit = cache && await cache.match(romUrl(rom.sha));
+      if (hit) return new Uint8Array(await hit.arrayBuffer());
+      // Si no, el navegador lo guarda en caché: la segunda vez no se vuelve a descargar.
+      let r;
+      try {
+        r = await api('roms.php?sha=' + rom.sha, { cache: 'default' });
+      } catch (e) {
+        throw new Error('sin conexión, y este juego no está guardado en el dispositivo');
+      }
       if (!r.ok) throw new Error('no se pudo descargar (HTTP ' + r.status + ')');
-      return new Uint8Array(await r.arrayBuffer());
+      const ab = await r.arrayBuffer();
+      if (cache) cache.put(romUrl(rom.sha), new Response(ab.slice(0))).catch(() => {});
+      return new Uint8Array(ab);
     }, 'local:' + rom.name);
   }
 
@@ -512,6 +551,186 @@
     finally { migratingLocal = false; }
   }
 
+  /* ---- Jugar sin conexión (Premium) ----
+   * Se activa en cada dispositivo desde la tarjeta Premium. Entonces se
+   * guardan aquí la web (sw.js), los juegos de la cuenta (caché 'gba-roms')
+   * y una copia de las partidas de la nube, y se recuerda la sesión para
+   * poder entrar sin red. Lo que se juegue sin conexión se queda pendiente
+   * en este dispositivo y se sube al volver la conexión. */
+
+  const OFFLINE_KEY = 'gbaoffline';          // '1': activado en este dispositivo
+  const OFFLINE_USER_KEY = 'gbaofflineuser'; // { user, roms, at } de la última vez con red
+  const OFFLINE_DAYS = 30;                   // sin red, la sesión guardada vale este tiempo
+  const ROM_CACHE = 'gba-roms';
+  let offlineSyncing = false;
+
+  function canOffline() { return 'serviceWorker' in navigator && 'caches' in window; }
+  function romUrl(sha) { return new URL('api/roms.php?sha=' + sha, location.href).href; }
+
+  function offlineEnabled() {
+    try { return canOffline() && localStorage.getItem(OFFLINE_KEY) === '1'; } catch (e) { return false; }
+  }
+
+  // Sesión guardada para entrar sin red (solo si sigue siendo válida).
+  function offlineUser() {
+    if (!offlineEnabled()) return null;
+    try {
+      const saved = JSON.parse(localStorage.getItem(OFFLINE_USER_KEY));
+      if (saved && saved.user && saved.user.premium && Date.now() - saved.at < OFFLINE_DAYS * 864e5) return saved;
+    } catch (e) { /* nada guardado */ }
+    return null;
+  }
+
+  async function enableOffline() {
+    if (!currentUser || !currentUser.premium || offlineSession) return;
+    try {
+      await navigator.serviceWorker.register('sw.js');
+      localStorage.setItem(OFFLINE_KEY, '1');
+    } catch (e) {
+      showToast('Este navegador no permite jugar sin conexión (' + (e.message || e) + ')', true);
+      return;
+    }
+    // Que el navegador no borre los juegos cuando le falte espacio.
+    if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+    renderPremium();
+    syncOffline();
+  }
+
+  async function disableOffline(rerender) {
+    try {
+      localStorage.removeItem(OFFLINE_KEY);
+      localStorage.removeItem(OFFLINE_USER_KEY);
+    } catch (e) { /* nada */ }
+    if (!canOffline()) return;
+    try {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map((r) => r.unregister()));
+      await caches.delete(ROM_CACHE);
+      await caches.delete('gba-shell');
+    } catch (e) { /* nada */ }
+    if (rerender) {
+      renderPremium();
+      showToast('Juegos borrados de este dispositivo');
+    }
+  }
+
+  function renderOfflineStatus(text) {
+    const p = premiumBox.querySelector('.offline-status');
+    if (!p) return;
+    if (text) { p.textContent = text; return; }
+    if (!offlineEnabled()) {
+      p.textContent = 'Guarda tus juegos y partidas en este dispositivo para jugar sin internet.';
+      return;
+    }
+    caches.open(ROM_CACHE).then((c) => c.keys()).then((keys) => {
+      if (offlineSyncing) return;
+      p.textContent = 'Activado: ' + keys.length + ' juego(s) guardados en este dispositivo. '
+        + 'Sin internet, abre esta web y entra directamente; las partidas se suben al volver la conexión.';
+    }).catch(() => {});
+  }
+
+  // Deja en el dispositivo los juegos de la cuenta y una copia de sus partidas.
+  async function syncOffline() {
+    if (!offlineEnabled() || offlineSession || offlineSyncing || !currentUser || !currentUser.premium) return;
+    offlineSyncing = true;
+    const user = currentUser;
+    try {
+      localStorage.setItem(OFFLINE_USER_KEY, JSON.stringify({ user, roms: myRoms, at: Date.now() }));
+      navigator.serviceWorker.register('sw.js').catch(() => {}); // por si se quitó
+
+      const cache = await caches.open(ROM_CACHE);
+      const wanted = new Set(myRoms.map((r) => romUrl(r.sha)));
+      for (const req of await cache.keys()) {
+        if (!wanted.has(req.url)) await cache.delete(req);
+      }
+      const missing = [];
+      for (const url of wanted) if (!(await cache.match(url))) missing.push(url);
+      for (let i = 0; i < missing.length; i++) {
+        if (currentUser !== user) return;
+        renderOfflineStatus('Guardando juegos en este dispositivo… ' + (i + 1) + ' de ' + missing.length);
+        const r = await fetch(missing[i], { credentials: 'same-origin', headers: { 'X-GBA': '1' } });
+        if (r.ok) await cache.put(missing[i], new Response(await r.arrayBuffer()));
+      }
+
+      // Partidas: se descarga la de la nube si cambió desde la última vez,
+      // salvo que aquí haya cambios sin subir.
+      const res = await api('saves.php');
+      if (res.ok) {
+        const { saves } = await res.json();
+        for (const s of saves) {
+          if (currentUser !== user) return;
+          const k = 'gbasave::' + user.id + '::' + s.key;
+          if (localStorage.getItem('gbapending::' + k) === '1' || localStorage.getItem('gbasaveat::' + k) === s.updated_at) continue;
+          const r = await api('saves.php?key=' + encodeURIComponent(s.key));
+          if (!r.ok) continue;
+          try {
+            localStorage.setItem(k, u8ToBase64(new Uint8Array(await r.arrayBuffer())));
+            localStorage.setItem('gbasaveat::' + k, s.updated_at);
+          } catch (e) { break; } // sin espacio en localStorage
+        }
+      }
+    } catch (e) {
+      console.warn('Modo sin conexión:', e);
+    } finally {
+      offlineSyncing = false;
+      renderOfflineStatus();
+    }
+  }
+
+  // Sube las partidas que quedaron pendientes en este dispositivo (p. ej.
+  // jugadas sin conexión), aunque no se vuelva a abrir ese juego.
+  async function flushPendingSaves() {
+    if (!currentUser) return;
+    const prefix = 'gbasave::' + currentUser.id + '::';
+    const keys = [];
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k.startsWith('gbapending::' + prefix) && localStorage.getItem(k) === '1') keys.push(k.slice('gbapending::'.length));
+      }
+    } catch (e) { return; }
+    let sent = 0;
+    for (const key of keys) {
+      if (key === saveKey) continue; // el juego abierto ya lo sube él
+      const b64 = localStorage.getItem(key);
+      if (!b64) continue;
+      try {
+        const r = await api('saves.php?key=' + encodeURIComponent(key.slice(prefix.length)), {
+          method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: trimmedSave(b64),
+        });
+        if (r.status === 402) break; // límite de la cuenta gratis
+        if (!r.ok) continue;
+        if (localStorage.getItem(key) === b64) localStorage.removeItem('gbapending::' + key);
+        sent++;
+      } catch (e) { return; } // sin conexión: otra vez será
+    }
+    if (sent) {
+      showToast(sent === 1 ? 'Partida del dispositivo subida a la nube' : sent + ' partidas del dispositivo subidas a la nube');
+      if (!document.body.classList.contains('playing')) renderSaves();
+    }
+  }
+
+  // Al volver la conexión se comprueba la sesión (en el menú, para no
+  // cortar la partida) y se sube lo pendiente.
+  async function recheckOnline() {
+    if (!offlineSession || !navigator.onLine || document.body.classList.contains('playing')) return;
+    try {
+      const data = await (await api('auth.php')).json();
+      offlineSession = false;
+      adsConfig = data.ads || null;
+      if (data.user) {
+        setUser(data.user);
+        flushPendingSaves();
+        showToast('Conexión recuperada');
+      } else {
+        setUser(null);
+        loginStatus.textContent = 'Vuelve a iniciar sesión para subir las partidas jugadas sin conexión.';
+      }
+    } catch (e) { /* sigue sin conexión */ }
+  }
+
+  window.addEventListener('online', recheckOnline);
+
   // .gb / .gbc usan el núcleo de Game Boy; el resto (.gba), el de GBA.
   function isGbFile(name) {
     return /\.(gb|gbc)$/i.test(name);
@@ -581,6 +800,7 @@
     releaseKeys();
     document.body.classList.remove('playing');
     menu.classList.remove('hidden');
+    recheckOnline();
   }
 
   if (menuBtn) menuBtn.addEventListener('click', goToMenu);
@@ -617,8 +837,10 @@
     } catch (e) { /* sin localStorage: solo servidor */ }
 
     let bytes = null;
-    if (local && pending) {
-      bytes = base64ToU8(local); // cambios que no llegaron a subirse
+    if (local && (pending || offlineSession)) {
+      bytes = base64ToU8(local); // cambios que no llegaron a subirse, o sin conexión
+    } else if (offlineSession) {
+      // Sin red y sin copia en el dispositivo: se empieza de cero.
     } else {
       try {
         const r = await api('saves.php?key=' + encodeURIComponent(cloudKey));
@@ -638,7 +860,7 @@
       Module.HEAPU8.set(full, Module._em_get_save_ptr());
       lastSavedB64 = u8ToBase64(full);
     }
-    if (pending) uploadSave();
+    if (pending && !offlineSession) uploadSave();
   }
 
   function saveNow(isLeaving) {
@@ -654,7 +876,7 @@
       localStorage.setItem(saveKey, b64);
       localStorage.setItem(pendingKey(), '1');
     } catch (e) { /* sin localStorage: depende solo de la subida */ }
-    if (cloudFull) {
+    if (cloudFull || offlineSession) {
       if (isLeaving !== true) showToast('Partida guardada en este dispositivo');
       return;
     }
@@ -708,7 +930,7 @@
   // Reintenta de vez en cuando lo que no se pudo subir.
   setInterval(() => {
     try {
-      if (saveKey && !uploading && !cloudFull && localStorage.getItem(pendingKey()) === '1') uploadSave();
+      if (saveKey && !uploading && !cloudFull && !offlineSession && localStorage.getItem(pendingKey()) === '1') uploadSave();
     } catch (e) { /* nada */ }
   }, 30000);
 
@@ -749,6 +971,10 @@
     const info = document.getElementById('menu-saves');
     if (!info || !currentUser) return;
     savesList.innerHTML = '';
+    if (offlineSession) {
+      info.textContent = 'Sin conexión: las partidas se guardan en este dispositivo y se suben a la nube al volver la conexión.';
+      return;
+    }
     try {
       const r = await api('saves.php');
       if (!r.ok) throw new Error('HTTP ' + r.status);
