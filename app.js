@@ -1158,6 +1158,10 @@
     el.requestFullscreen().catch(() => { /* el navegador no lo permite: se sigue en la ventana */ });
   }
 
+  document.addEventListener('fullscreenchange', () => {
+    document.getElementById('fs-btn').textContent = document.fullscreenElement ? 'Salir de pantalla completa' : 'Pantalla completa';
+  });
+
   function toggleFullscreen() {
     if (document.fullscreenElement) document.exitFullscreen();
     else enterFullscreen();
@@ -1190,8 +1194,18 @@
     return !(t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable));
   }
 
+  document.getElementById('fs-btn').addEventListener('click', toggleFullscreen);
+
   document.addEventListener('keydown', (ev) => {
-    if (ev.ctrlKey || ev.metaKey || ev.altKey || !keyboardPlaying(ev)) return;
+    if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+    // F: pantalla completa también en el menú (salvo escribiendo en un campo).
+    const typing = ev.target && (ev.target.tagName === 'INPUT' || ev.target.tagName === 'TEXTAREA');
+    if (ev.code === 'KeyF' && !ev.repeat && !typing && isDesktop()) {
+      ev.preventDefault();
+      toggleFullscreen();
+      return;
+    }
+    if (!keyboardPlaying(ev)) return;
     if (!audioUnlocked) { audioUnlocked = true; initAudio(); }
     const btn = KEY_MAP[ev.code];
     if (btn !== undefined) {
@@ -1204,7 +1218,6 @@
     }
     if (ev.repeat) return;
     if (ev.code === 'Space') { ev.preventDefault(); nextSpeed(); }
-    else if (ev.code === 'KeyF') { ev.preventDefault(); toggleFullscreen(); }
     else if (ev.code === 'Escape' || ev.code === 'KeyM') { ev.preventDefault(); goToMenu(); }
     else if (ev.code === 'KeyE') { ev.preventDefault(); extrasBtn.click(); }
   });

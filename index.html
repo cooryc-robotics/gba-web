@@ -368,6 +368,43 @@
     height: min(100dvh, calc(100vw * var(--ar-h, 160) / var(--ar-w, 240)));
   }
   body.desktop.playing { cursor: none; }
+
+  /* Menú e inicio de sesión a todo el ancho de la pantalla */
+  #fs-btn { display: none; }
+  body.desktop #menu {
+    max-width: none;
+    padding-left: max(40px, calc(50vw - 560px));
+    padding-right: max(40px, calc(50vw - 560px));
+  }
+  body.desktop #menu h1 { font-size: 28px; }
+  body.desktop #menu-list, body.desktop #menu-local {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 12px;
+  }
+  body.desktop #menu-list .menu-item, body.desktop #menu-local .menu-row { margin: 0; }
+  body.desktop #menu-local:not(:empty) { margin-bottom: 12px; }
+  body.desktop .menu-load { max-width: 420px; }
+  body.desktop .menu-item:hover, body.desktop .menu-del:hover, body.desktop #logout-btn:hover, body.desktop #fs-btn:hover {
+    filter: brightness(1.15);
+  }
+  body.desktop #menu-user span { margin-right: auto; }
+  body.desktop #fs-btn {
+    display: block;
+    flex: none;
+    padding: 6px 12px;
+    border: none;
+    border-radius: 10px;
+    background: var(--shoulder);
+    color: var(--label);
+    font-size: 13px;
+  }
+  body.desktop #menu-strip { max-width: none; }
+  body.desktop #login {
+    max-width: none;
+    padding-left: max(40px, calc(50vw - 210px));
+    padding-right: max(40px, calc(50vw - 210px));
+  }
   body.desktop.playing.show-bar { cursor: auto; }
 
   /* Menú de selección de juego (pantalla completa, con scroll propio) */
@@ -719,7 +756,7 @@
 
 <!-- Menú de selección de juego -->
 <div id="menu">
-  <div id="menu-user" class="hidden"><span id="menu-username"></span><button id="logout-btn">Cerrar sesión</button></div>
+  <div id="menu-user" class="hidden"><span id="menu-username"></span><button id="fs-btn">Pantalla completa</button><button id="logout-btn">Cerrar sesión</button></div>
   <h1>Selecciona un juego</h1>
   <p id="menu-status">Cargando emulador…</p>
   <div id="menu-list"></div>
