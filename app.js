@@ -69,11 +69,10 @@
     return [];
   }
 
-  Promise.all([createGBModule(), loadRomList()])
-    .then(([mod, list]) => {
-      Module = mod;
-      buildMenu(list);
-    })
+  // El emulador no espera a la lista: con mala red, roms.json puede tardar.
+  const moduleReady = createGBModule().then((mod) => { Module = mod; return mod; });
+  Promise.all([moduleReady, loadRomList()])
+    .then(([, list]) => buildMenu(list))
     .catch((err) => setMenuStatus('No se pudo iniciar el emulador: ' + err, true));
 
   /* ---- Cuenta de usuario ---- */
@@ -351,12 +350,13 @@
   // Arranca un juego. getBuf() devuelve un Uint8Array con el ROM; key
   // identifica su partida guardada.
   async function launch(title, getBuf, key) {
-    if (starting || !Module) return;
+    if (starting) return;
     starting = true;
     initAudio(); // pulsar un juego es el gesto que exigen los navegadores para el audio
     if (isDesktop()) enterFullscreen(); // también necesita el gesto: antes de cualquier await
     setMenuStatus('Cargando ' + title + '…');
     try {
+      await moduleReady; // si se pulsa antes de que termine de cargar el emulador
       const buf = await getBuf();
       if (await loadRom(buf, key)) {
         menu.classList.add('hidden');
