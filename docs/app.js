@@ -32,6 +32,11 @@
   let lastSavedB64 = null;  // para no reescribir localStorage si no ha cambiado nada
   let currentUser = null;   // { id, username } con la sesión iniciada
   let offlineSession = false; // se entró sin red con la sesión guardada (Premium)
+  // Jugar sin conexión (ver más abajo)
+  const OFFLINE_KEY = 'gbaoffline';          // '1': activado en este dispositivo
+  const OFFLINE_USER_KEY = 'gbaofflineuser'; // { user, roms, at } de la última vez con red
+  const OFFLINE_DAYS = 30;                   // sin red, la sesión guardada vale este tiempo
+  const ROM_CACHE = 'gba-roms';
 
   function setMenuStatus(msg, isError) {
     menuStatus.textContent = msg || '';
@@ -39,9 +44,16 @@
     if (isError) console.error(msg);
   }
 
+  // fetch que se rinde si la red no contesta (cobertura mala).
+  function fetchWithin(url, opts, ms) {
+    const ctl = new AbortController();
+    setTimeout(() => ctl.abort(), ms);
+    return fetch(url, Object.assign({}, opts, { signal: ctl.signal }));
+  }
+
   async function loadRomList() {
     try {
-      const r = await fetch(ROMS_URL, { cache: 'no-cache' });
+      const r = await fetchWithin(ROMS_URL, { cache: 'no-cache' }, 4000);
       if (r.ok) {
         const list = await r.json();
         if (Array.isArray(list)) {
@@ -51,17 +63,16 @@
     } catch (e) { /* sin roms.json: probamos el ROM suelto */ }
     // Sin roms.json: solo ofrecemos el ROM suelto si existe de verdad.
     try {
-      const r = await fetch(FALLBACK_ROMS[0].file, { method: 'HEAD' });
+      const r = await fetchWithin(FALLBACK_ROMS[0].file, { method: 'HEAD' }, 4000);
       if (r.ok) return FALLBACK_ROMS;
     } catch (e) { /* nada */ }
     return [];
   }
 
-  Promise.all([createGBModule(), loadRomList()])
-    .then(([mod, list]) => {
-      Module = mod;
-      buildMenu(list);
-    })
+  // El emulador no espera a la lista: con mala red, roms.json puede tardar.
+  const moduleReady = createGBModule().then((mod) => { Module = mod; return mod; });
+  Promise.all([moduleReady, loadRomList()])
+    .then(([, list]) => buildMenu(list))
     .catch((err) => setMenuStatus('No se pudo iniciar el emulador: ' + err, true));
 
   /* ---- Cuenta de usuario ---- */
@@ -300,7 +311,11 @@
     setUser(null);
   });
 
-  api('auth.php')
+  // Con el modo sin conexión no se espera indefinidamente a una red que no
+  // contesta (cobertura mala): pasado un rato se entra sin conexión.
+  const authAbort = new AbortController();
+  if (offlineUser()) setTimeout(() => authAbort.abort(), 5000);
+  api('auth.php', { signal: authAbort.signal })
     .then((r) => r.json())
     .then((data) => {
       adsConfig = data.ads || null;
@@ -335,12 +350,13 @@
   // Arranca un juego. getBuf() devuelve un Uint8Array con el ROM; key
   // identifica su partida guardada.
   async function launch(title, getBuf, key) {
-    if (starting || !Module) return;
+    if (starting) return;
     starting = true;
     initAudio(); // pulsar un juego es el gesto que exigen los navegadores para el audio
     if (isDesktop()) enterFullscreen(); // también necesita el gesto: antes de cualquier await
     setMenuStatus('Cargando ' + title + '…');
     try {
+      await moduleReady; // si se pulsa antes de que termine de cargar el emulador
       const buf = await getBuf();
       if (await loadRom(buf, key)) {
         menu.classList.add('hidden');
@@ -558,10 +574,6 @@
    * poder entrar sin red. Lo que se juegue sin conexión se queda pendiente
    * en este dispositivo y se sube al volver la conexión. */
 
-  const OFFLINE_KEY = 'gbaoffline';          // '1': activado en este dispositivo
-  const OFFLINE_USER_KEY = 'gbaofflineuser'; // { user, roms, at } de la última vez con red
-  const OFFLINE_DAYS = 30;                   // sin red, la sesión guardada vale este tiempo
-  const ROM_CACHE = 'gba-roms';
   let offlineSyncing = false;
 
   function canOffline() { return 'serviceWorker' in navigator && 'caches' in window; }

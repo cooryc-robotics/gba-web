@@ -9,7 +9,8 @@
 
 const SHELL = 'gba-shell';
 const FILES = ['./', 'app.js', 'gb.js', 'gb.wasm', 'gb-audio-worklet.js'];
-const SCOPE = new URL(self.registration.scope);
+const NET_TIMEOUT_MS = 3000;
+const SCOPE =new URL(self.registration.scope);
 const SHELL_URLS = new Set(FILES.map((f) => new URL(f, SCOPE).href));
 
 self.addEventListener('install', (ev) => {
@@ -28,18 +29,24 @@ self.addEventListener('fetch', (ev) => {
   const key = req.mode === 'navigate' ? new URL('./', SCOPE).href : url.origin + url.pathname;
   if (!SHELL_URLS.has(key)) return;
 
-  ev.respondWith((async () => {
-    try {
-      const res = await fetch(req);
-      if (res.ok) {
-        const copy = res.clone();
-        caches.open(SHELL).then((c) => c.put(key, copy));
-      }
-      return res;
-    } catch (err) {
-      const cached = await caches.match(key);
-      if (cached) return cached;
-      throw err;
+  const net = fetch(req).then((res) => {
+    if (res.ok) {
+      const copy = res.clone();
+      ev.waitUntil(caches.open(SHELL).then((c) => c.put(key, copy)));
     }
+    return res;
+  });
+  ev.waitUntil(net.catch(() => {}));
+
+  ev.respondWith((async () => {
+    // Con cobertura mala la red puede no contestar nunca (y no fallar):
+    // pasado un rato se usa la copia del dispositivo.
+    const timeout = new Promise((resolve) => setTimeout(resolve, NET_TIMEOUT_MS, null));
+    try {
+      const res = await Promise.race([net, timeout]);
+      if (res) return res;
+    } catch (err) { /* sin conexión */ }
+    const cached = await caches.match(key);
+    return cached || net;
   })());
 });
