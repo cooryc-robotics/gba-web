@@ -121,6 +121,16 @@ function migrate(PDO $pdo): void {
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4',
         ],
+        5 => [ // llaveros NFC con Premium: solo se guarda el sha256 del código
+            'CREATE TABLE premium_codes (
+                code_hash CHAR(64) NOT NULL PRIMARY KEY,
+                batch VARCHAR(40) NOT NULL,
+                created_at DATETIME NOT NULL,
+                redeemed_by INT UNSIGNED NULL,
+                redeemed_at DATETIME NULL,
+                INDEX (redeemed_by)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4',
+        ],
     ];
 
     $pdo->exec('CREATE TABLE IF NOT EXISTS schema_version (v INT NOT NULL) ENGINE=InnoDB');
@@ -223,6 +233,34 @@ function ads_config(): ?array {
     $slot = (string)($a['slot'] ?? '');
     if (!preg_match('/^ca-pub-\d{10,20}$/', $client) || !preg_match('/^\d{5,20}$/', $slot)) return null;
     return ['client' => $client, 'slot' => $slot];
+}
+
+/* Llavero NFC con Premium (se vende fuera de la web). En config.php, opcional:
+ *   'llavero' => ['url' => 'https://…donde se compra…', 'price' => '5,99 €'] */
+function keychain_config(): array {
+    $k = config()['llavero'] ?? [];
+    $url = is_array($k) ? (string)($k['url'] ?? '') : '';
+    $price = is_array($k) ? (string)($k['price'] ?? '') : '';
+    return [
+        'url' => preg_match('#^https://[^\s"<>]{3,300}$#', $url) ? $url : null,
+        'price' => $price !== '' && strlen($price) <= 20 ? $price : '5,99 €',
+    ];
+}
+
+/* Freno a quien prueba contraseñas o códigos a lo bruto: como mucho
+ * MAX_FAILS intentos fallidos por IP cada FAIL_WINDOW_MIN minutos. */
+const MAX_FAILS = 10;
+const FAIL_WINDOW_MIN = 15;
+
+function check_fails(): void {
+    $st = db()->prepare('SELECT COUNT(*) FROM login_fails WHERE ip = ? AND at > DATE_SUB(NOW(), INTERVAL ' . FAIL_WINDOW_MIN . ' MINUTE)');
+    $st->execute([client_ip()]);
+    if ((int)$st->fetchColumn() >= MAX_FAILS) fail(429, 'Demasiados intentos. Prueba dentro de un rato.');
+}
+
+function note_fail(): void {
+    db()->prepare('INSERT INTO login_fails (ip, at) VALUES (?, NOW())')->execute([client_ip()]);
+    db()->exec('DELETE FROM login_fails WHERE at < DATE_SUB(NOW(), INTERVAL 1 DAY)');
 }
 
 function require_user(): array {

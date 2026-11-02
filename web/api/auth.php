@@ -1,7 +1,7 @@
 <?php
 /* auth.php — cuentas de usuario.
  *
- *   GET  auth.php                     → { user: {id, username, premium, theme} | null, ads }
+ *   GET  auth.php                     → { user: {id, username, premium, theme} | null, ads, llavero }
  *   POST auth.php?action=register     { username, password }
  *   POST auth.php?action=login        { username, password }
  *   POST auth.php?action=logout
@@ -12,13 +12,10 @@
 declare(strict_types=1);
 require __DIR__ . '/lib.php';
 
-const MAX_FAILS = 10;      // intentos fallidos permitidos por IP…
-const FAIL_WINDOW_MIN = 15; // …en este número de minutos
-
 $action = $_GET['action'] ?? '';
 
 if ($action === '') {
-    json_out(200, ['user' => current_user(), 'ads' => ads_config()]);
+    json_out(200, ['user' => current_user(), 'ads' => ads_config(), 'llavero' => keychain_config()]);
 }
 
 require_post();
@@ -37,14 +34,7 @@ if ($action === 'settings') {
 }
 
 // Freno a quien prueba contraseñas a lo bruto.
-$st = db()->prepare('SELECT COUNT(*) FROM login_fails WHERE ip = ? AND at > DATE_SUB(NOW(), INTERVAL ' . FAIL_WINDOW_MIN . ' MINUTE)');
-$st->execute([client_ip()]);
-if ((int)$st->fetchColumn() >= MAX_FAILS) fail(429, 'Demasiados intentos. Prueba dentro de un rato.');
-
-function note_fail(): void {
-    db()->prepare('INSERT INTO login_fails (ip, at) VALUES (?, NOW())')->execute([client_ip()]);
-    db()->exec('DELETE FROM login_fails WHERE at < DATE_SUB(NOW(), INTERVAL 1 DAY)');
-}
+check_fails();
 
 $in = read_json();
 $password = (string)($in['password'] ?? '');

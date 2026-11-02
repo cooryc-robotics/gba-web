@@ -598,6 +598,20 @@
   }
   #login input:focus { outline: none; border-color: var(--meta); }
   #login .menu-item { text-align: center; }
+  #login-note {
+    margin: 0 0 14px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: rgba(255, 210, 63, 0.18);
+    color: #ffe58a;
+    font-size: 14px;
+    line-height: 1.4;
+  }
+  .keychain-box { margin-top: 16px; padding-top: 14px; border-top: 1px solid rgba(255, 255, 255, 0.12); }
+  .keychain-box h3 { margin: 0 0 6px; font-size: 14px; }
+  .keychain-box p { margin: 0 0 10px; font-size: 13px; line-height: 1.5; opacity: 0.85; }
+  .keychain-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .keychain-actions a.chip { text-decoration: none; display: inline-block; }
   #login-status { min-height: 18px; margin: 6px 0 0; font-size: 13px; color: #ffb4b4; }
 
   button { font-family: inherit; }
@@ -822,6 +836,7 @@
 <div id="login" class="hidden">
   <h1>Game Boy Web</h1>
   <p class="login-sub">Inicia sesión para guardar tus partidas en tu cuenta.</p>
+  <p id="login-note" class="hidden">🔑 Llavero Premium detectado. Entra o crea tu cuenta y Premium se activará solo.</p>
   <form id="login-form" novalidate>
     <input id="login-user" name="username" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="Usuario">
     <input id="login-pass" name="password" type="password" autocomplete="current-password" placeholder="Contraseña">
