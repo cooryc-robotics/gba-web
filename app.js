@@ -38,6 +38,20 @@
   const OFFLINE_DAYS = 30;                   // sin red, la sesión guardada vale este tiempo
   const ROM_CACHE = 'gba-roms';
 
+  // Llavero NFC: lleva grabada la dirección de la web con ?llavero=CÓDIGO.
+  // El código se guarda para la pestaña hasta entrar o crear la cuenta.
+  const KEYCHAIN_KEY = 'gballavero';
+  let keychainCfg = { url: null, price: '5,99 €' }; // lo manda auth.php
+  let pendingKeychain = null;
+  try {
+    const code = new URLSearchParams(location.search).get('llavero');
+    if (code) {
+      sessionStorage.setItem(KEYCHAIN_KEY, code);
+      history.replaceState(null, '', location.pathname);
+    }
+    pendingKeychain = sessionStorage.getItem(KEYCHAIN_KEY);
+  } catch (e) { /* sin sessionStorage */ }
+
   function setMenuStatus(msg, isError) {
     menuStatus.textContent = msg || '';
     menuStatus.classList.toggle('error', !!isError);
@@ -107,6 +121,66 @@
     renderAd();
     refreshLocal();
     if (user) { renderSaves(); migrateDeviceRoms(); }
+    document.getElementById('login-note').classList.toggle('hidden', !pendingKeychain);
+    if (user && pendingKeychain && !offlineSession) redeemKeychain(pendingKeychain);
+  }
+
+  /* ---- Llavero NFC con Premium (se vende fuera de la web) ---- */
+
+  let redeeming = false;
+
+  async function redeemKeychain(code) {
+    if (redeeming) return;
+    redeeming = true;
+    const forget = () => {
+      pendingKeychain = null;
+      try { sessionStorage.removeItem(KEYCHAIN_KEY); } catch (e) { /* nada */ }
+      document.getElementById('login-note').classList.add('hidden');
+    };
+    try {
+      const r = await api('llavero.php', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (r.status === 401) return; // la sesión caducó: se canjea al volver a entrar
+      forget();
+      if (!r.ok) throw new Error(data.error || 'HTTP ' + r.status);
+      redeeming = false;
+      if (data.user && !data.already) {
+        setUser(data.user);
+        showToast('🔑 ¡Llavero activado! Ya eres Premium');
+        premiumBox.scrollIntoView({ behavior: 'smooth' });
+      } else {
+        showToast('Este llavero ya está activado en tu cuenta');
+      }
+    } catch (e) {
+      // Sin conexión se queda pendiente y se reintenta la próxima vez.
+      showToast(e instanceof TypeError ? 'Sin conexión: el llavero se activará al volver la conexión' : e.message, true);
+    } finally {
+      redeeming = false;
+    }
+  }
+
+  function keychainBox() {
+    const box = el('div', 'keychain-box');
+    box.appendChild(el('h3', null, '🔑 Llavero NFC Premium · ' + keychainCfg.price));
+    box.appendChild(el('p', null, 'Acerca el llavero al móvil y tu cuenta pasa a Premium. Sirve también para regalar.'));
+    const actions = el('div', 'keychain-actions');
+    if (keychainCfg.url) {
+      const buy = el('a', 'chip', 'Comprar llavero');
+      buy.href = keychainCfg.url;
+      buy.target = '_blank';
+      buy.rel = 'noopener';
+      actions.appendChild(buy);
+    }
+    const typed = el('button', 'chip', 'Escribir el código del llavero');
+    typed.addEventListener('click', () => {
+      const code = window.prompt('Escribe el código impreso en el llavero (12 letras y números):');
+      if (code && code.trim()) redeemKeychain(code.trim());
+    });
+    actions.appendChild(typed);
+    box.appendChild(actions);
+    return box;
   }
 
   /* ---- Anuncios: banda inferior del menú para cuentas gratis ----
@@ -180,6 +254,7 @@
       const buy = el('button', 'menu-item buy-btn', 'Hazte Premium por 4,99 €');
       buy.addEventListener('click', () => startPayment(buy));
       premiumBox.appendChild(buy);
+      premiumBox.appendChild(keychainBox());
       return;
     }
     premiumBox.className = 'premium-card is-premium';
@@ -319,6 +394,7 @@
     .then((r) => r.json())
     .then((data) => {
       adsConfig = data.ads || null;
+      if (data.llavero) keychainCfg = data.llavero;
       setUser(data.user || null);
       if (data.user) { handlePaymentReturn(); flushPendingSaves(); }
     })
